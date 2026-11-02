@@ -1,0 +1,9 @@
+schema: 1
+name: [[.Name]]
+lang: [[.Lang]]
+version: 0.0.0 # x-release-please-version
+skill: [[if .Skill]][[.Name]][[else]]null[[end]]
+platforms:
+[[- range .Platforms]]
+  - [[.]]
+[[- end]]

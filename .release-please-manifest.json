@@ -1,0 +1,8 @@
+{
+  "skills/hello-go": "0.0.0",
+  "skills/hello-zig": "0.0.0",
+  "skills/imgen": "0.0.0",
+  "tools/hello-go": "0.0.0",
+  "tools/hello-zig": "0.0.0",
+  "tools/imgen": "0.0.0"
+}

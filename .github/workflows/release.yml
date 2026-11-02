@@ -1,0 +1,45 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      tags: ${{ steps.tools.outputs.tags }}
+    steps:
+      - id: rp
+        uses: googleapis/release-please-action@v4
+        with:
+          # A PAT or GitHub App token lets Release PRs trigger CI; GITHUB_TOKEN works but skips it.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - id: tools
+        env:
+          OUTPUTS: ${{ toJSON(steps.rp.outputs) }}
+        # CLI releases only; skill releases carry no binaries.
+        run: |
+          tags=$(jq -c '[to_entries[] | select(.key | test("^tools/[^/]+--tag_name$")) | .value]' <<<"$OUTPUTS")
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.tags != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: ${{ fromJSON(needs.release-please.outputs.tags) }}
+    uses: ./.github/workflows/publish.yml
+    with:
+      tag: ${{ matrix.tag }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write

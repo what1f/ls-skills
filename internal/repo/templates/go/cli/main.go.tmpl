@@ -1,0 +1,49 @@
+// Command [[.Name]] TODO: one-line summary.
+package main
+
+import (
+	"fmt"
+	"io"
+	"os"
+
+	"github.com/what1f/ls-skills/packages/go/clikit"
+)
+
+const name = "[[.Name]]"
+
+const usage = `[[.Name]] - TODO: one-line summary.
+
+Usage:
+  [[.Name]] <command> [flags]
+
+Commands:
+  version   Print version information
+
+Flags:
+  -h, --help   Show help
+  --version    Print version
+
+Run '[[.Name]] <command> --help' for command flags.
+`
+
+func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
+
+func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprint(stderr, usage)
+		return clikit.ExitUsage
+	}
+	switch cmd, rest := args[0], args[1:]; cmd {
+	case "-h", "--help", "help":
+		fmt.Fprint(stdout, usage)
+		return clikit.ExitOK
+	case "--version":
+		fmt.Fprintln(stdout, clikit.Build(name))
+		return clikit.ExitOK
+	case "version":
+		return clikit.RunVersion(name, rest, stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "unknown command %q\n\n%s", cmd, usage)
+		return clikit.ExitUsage
+	}
+}

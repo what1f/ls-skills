@@ -1,0 +1,14 @@
+.{
+    .name = .[[.Ident]],
+    .version = "0.0.0", // x-release-please-version
+    .fingerprint = [[.Fingerprint]], // Changing this has security and trust implications.
+    .minimum_zig_version = "[[.ZigVersion]]",
+    .dependencies = .{
+        .clikit = .{ .path = "../../../packages/zig/clikit" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

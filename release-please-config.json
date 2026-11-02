@@ -1,0 +1,87 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "go",
+  "initial-version": "0.1.0",
+  "bump-minor-pre-major": true,
+  "separate-pull-requests": true,
+  "include-component-in-tag": true,
+  "packages": {
+    "skills/hello-go": {
+      "component": "hello-go-skill",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "SKILL.md"
+        },
+        {
+          "type": "json",
+          "path": "/.claude-plugin/marketplace.json",
+          "jsonpath": "$.plugins[?(@.name=='hello-go')].version"
+        }
+      ]
+    },
+    "skills/hello-zig": {
+      "component": "hello-zig-skill",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "SKILL.md"
+        },
+        {
+          "type": "json",
+          "path": "/.claude-plugin/marketplace.json",
+          "jsonpath": "$.plugins[?(@.name=='hello-zig')].version"
+        }
+      ]
+    },
+    "skills/imgen": {
+      "component": "imgen-skill",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "SKILL.md"
+        },
+        {
+          "type": "json",
+          "path": "/.claude-plugin/marketplace.json",
+          "jsonpath": "$.plugins[?(@.name=='imgen')].version"
+        }
+      ]
+    },
+    "tools/hello-go": {
+      "component": "hello-go",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "tool.yaml"
+        }
+      ]
+    },
+    "tools/hello-zig": {
+      "component": "hello-zig",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "tool.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "cli/build.zig.zon"
+        }
+      ]
+    },
+    "tools/imgen": {
+      "component": "imgen",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "tool.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "cli/build.zig.zon"
+        }
+      ]
+    }
+  }
+}

@@ -168,7 +168,8 @@ func loadSkill(root, name string) (*Skill, error) {
 }
 
 func splitFrontmatter(data []byte) (fm, body []byte, err error) {
-	s := string(data)
+	// Tolerate CRLF checkouts (Windows with core.autocrlf).
+	s := strings.ReplaceAll(string(data), "\r\n", "\n")
 	if !strings.HasPrefix(s, "---\n") {
 		return nil, nil, errors.New("missing YAML frontmatter")
 	}

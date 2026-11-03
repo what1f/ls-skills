@@ -59,3 +59,10 @@ func TestRepoStructure(t *testing.T) {
 		t.Fatalf("structure:\n%s", strings.Join(problems, "\n"))
 	}
 }
+
+func TestSplitFrontmatterCRLF(t *testing.T) {
+	fm, body, err := splitFrontmatter([]byte("---\r\nname: x\r\n---\r\nbody\r\n"))
+	if err != nil || string(fm) != "name: x" || string(body) != "body\n" {
+		t.Fatalf("got %q %q %v", fm, body, err)
+	}
+}

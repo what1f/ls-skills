@@ -1,6 +1,6 @@
 .{
     .name = .imgen,
-    .version = "0.0.0", // x-release-please-version
+    .version = "0.1.0", // x-release-please-version
     .fingerprint = 0x6454c3e79a57a685, // Changing this has security and trust implications.
     .minimum_zig_version = "0.17.0",
     .dependencies = .{

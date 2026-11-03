@@ -14,7 +14,7 @@
 | `release-please-config.json`、`.release-please-manifest.json`、`.claude-plugin/marketplace.json` | 生成文件：用 `make sync` 维护，手改会被检查拦下 |
 
 - `tools/<name>` 和 `skills/<name>` 同名配对，配对关系写在 `tool.yaml` 的 `skill:` 字段；没有 skill 的工具写 `skill: null`，也可以只有 skill 没有 CLI。
-- `hello-go`、`hello-zig` 是用来跑通流水线的示例，有了同语言的真实工具后删除。
+- `hello-go` 是用来跑通流水线的 Go 示例，有了 Go 的真实工具后删除。
 
 ## 命令
 

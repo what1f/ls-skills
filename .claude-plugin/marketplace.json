@@ -15,16 +15,6 @@
       ]
     },
     {
-      "name": "hello-zig",
-      "description": "用 hello-zig CLI 生成问候语。",
-      "version": "0.0.0",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./skills/hello-zig"
-      ]
-    },
-    {
       "name": "imgen",
       "description": "TODO 做什么 + 何时用。",
       "version": "0.0.0",

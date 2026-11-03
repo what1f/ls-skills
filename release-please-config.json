@@ -20,20 +20,6 @@
         }
       ]
     },
-    "skills/hello-zig": {
-      "component": "hello-zig-skill",
-      "extra-files": [
-        {
-          "type": "generic",
-          "path": "SKILL.md"
-        },
-        {
-          "type": "json",
-          "path": "/.claude-plugin/marketplace.json",
-          "jsonpath": "$.plugins[?(@.name=='hello-zig')].version"
-        }
-      ]
-    },
     "skills/imgen": {
       "component": "imgen-skill",
       "extra-files": [
@@ -54,19 +40,6 @@
         {
           "type": "generic",
           "path": "tool.yaml"
-        }
-      ]
-    },
-    "tools/hello-zig": {
-      "component": "hello-zig",
-      "extra-files": [
-        {
-          "type": "generic",
-          "path": "tool.yaml"
-        },
-        {
-          "type": "generic",
-          "path": "cli/build.zig.zon"
         }
       ]
     },

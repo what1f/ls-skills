@@ -39,7 +39,7 @@ Windows PowerShell：
 | 工具 | 说明 |
 | --- | --- |
 | [hello-go](tools/hello-go) | Go 示例 |
-| [hello-zig](tools/hello-zig) | Zig 示例 |
+| [imgen](tools/imgen) | 命令行生成和编辑图片 |
 
 ## 参与开发
 

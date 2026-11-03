@@ -2,7 +2,7 @@
 name: hello-go
 description: 用 hello-go CLI 生成问候语。当用户要求打招呼、生成问候语、或提到 hello-go 时使用。这是仓库的 Go 示例 skill。
 metadata:
-  version: "0.0.0" # x-release-please-version
+  version: "0.1.0" # x-release-please-version
   requires: "hello-go>=0.1.0"
 ---
 

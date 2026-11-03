@@ -1,5 +1,5 @@
 {
-  "skills/hello-go": "0.0.0",
+  "skills/hello-go": "0.1.0",
   "skills/imgen": "0.0.0",
   "tools/hello-go": "0.0.0",
   "tools/imgen": "0.1.0"

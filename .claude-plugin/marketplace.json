@@ -7,7 +7,7 @@
     {
       "name": "hello-go",
       "description": "用 hello-go CLI 生成问候语。",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "source": "./",
       "strict": false,
       "skills": [

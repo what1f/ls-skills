@@ -70,6 +70,18 @@ pub fn fileExists(io: Io, path: []const u8) bool {
     return true;
 }
 
+/// Writes `data`, creating parent directories. Without `force` an existing
+/// file is an `exists` failure.
+pub fn writeFile(io: Io, path: []const u8, data: []const u8, force: bool) ?@import("clikit").Failure {
+    const cwd = Io.Dir.cwd();
+    if (std.fs.path.dirname(path)) |dir| cwd.createDirPath(io, dir) catch return .{ .code = "write_failed", .message = "cannot create the output directory" };
+    cwd.writeFile(io, .{ .sub_path = path, .data = data, .flags = .{ .exclusive = !force } }) catch |err| return switch (err) {
+        error.PathAlreadyExists => .{ .code = "exists", .message = "file appeared while generating (use --force to overwrite)" },
+        else => .{ .code = "write_failed", .message = @errorName(err) },
+    };
+    return null;
+}
+
 fn noneExist(_: void, _: []const u8) bool {
     return false;
 }

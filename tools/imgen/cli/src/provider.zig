@@ -18,6 +18,8 @@ pub const Sizes = enum {
     fixed,
     /// Size is ignored; the aspect ratio is written into the prompt.
     prompt,
+    /// A fixed list of aspect ratios plus size tiers (Gemini).
+    ratio,
 };
 
 pub const Capabilities = struct {
@@ -58,11 +60,6 @@ pub const Provider = struct {
     default_caps: Capabilities,
     models: []const Model,
 
-    /// Callable in this build.
-    pub fn available(p: Provider) bool {
-        return p.protocol == .openai;
-    }
-
     pub fn caps(p: Provider, model: []const u8) Capabilities {
         for (p.models) |m| if (std.mem.eql(u8, m.name, model)) return m.caps;
         return p.default_caps;
@@ -72,7 +69,7 @@ pub const Provider = struct {
 fn protocolCaps(protocol: Protocol) Capabilities {
     return switch (protocol) {
         .openai => .{ .edit = true, .mask = true, .native_transparent = false, .sizes = .flexible, .output_format = true, .quality = true, .max_images = 16 },
-        .gemini => .{ .edit = true, .mask = false, .native_transparent = false, .sizes = .fixed, .output_format = false, .quality = false, .max_images = 14 },
+        .gemini => .{ .edit = true, .mask = false, .native_transparent = false, .sizes = .ratio, .output_format = false, .quality = false, .max_images = 14 },
     };
 }
 
@@ -89,6 +86,19 @@ const openai_models = [_]Model{
     .{ .name = "gpt-image-1.5", .caps = gpt_image_1_caps },
     .{ .name = "gpt-image-1", .caps = gpt_image_1_caps },
     .{ .name = "gpt-image-1-mini", .caps = gpt_image_1_caps },
+};
+
+// https://ai.google.dev/gemini-api/docs/image-generation (2026-11)
+const gemini_models = [_]Model{
+    .{ .name = "gemini-nano-banana-2.1", .caps = protocolCaps(.gemini) },
+    .{ .name = "gemini-3.1-flash-image", .caps = protocolCaps(.gemini) },
+    .{ .name = "gemini-3.1-flash-lite-image", .caps = protocolCaps(.gemini) },
+    .{ .name = "gemini-3-pro-image", .caps = protocolCaps(.gemini) },
+    .{ .name = "gemini-2.5-flash-image", .caps = blk: {
+        var c = protocolCaps(.gemini);
+        c.max_images = 3;
+        break :blk c;
+    } },
 };
 
 const codex_models = [_]Model{
@@ -116,9 +126,9 @@ fn builtins(arena: Allocator, env: *const Environ.Map) Allocator.Error![]Provide
         .base_url = envUrl(env, "GEMINI_BASE_URL") orelse "https://generativelanguage.googleapis.com",
         .auth = .{ .env = &.{ "GEMINI_API_KEY", "GOOGLE_API_KEY" } },
         .edit_format = .json,
-        .default_model = "gemini-3-pro-image",
+        .default_model = "gemini-nano-banana-2.1",
         .default_caps = protocolCaps(.gemini),
-        .models = &.{},
+        .models = &gemini_models,
     };
     list[2] = .{
         .name = "codex",
@@ -361,19 +371,18 @@ pub fn hasCredential(io: Io, arena: Allocator, p: Provider, env: *const Environ.
 }
 
 pub const Credential = union(enum) {
-    /// Value for the Authorization header; null for `auth = none`.
+    /// The key or token; null for `auth = none`.
     ok: ?[]const u8,
     /// Why it is missing, naming what the user should set or run.
     missing: []const u8,
 };
 
-/// Reads the credential and returns the Authorization header value. Never
-/// put the result in any output.
+/// Reads the credential. Never put the result in any output.
 pub fn credential(io: Io, arena: Allocator, p: Provider, env: *const Environ.Map) Allocator.Error!Credential {
     switch (p.auth) {
         .none => return .{ .ok = null },
         .env => |names| {
-            for (names) |n| if (nonEmpty(env, n)) |key| return .{ .ok = try bearer(arena, key) };
+            for (names) |n| if (nonEmpty(env, n)) |key| return .{ .ok = key };
             return .{ .missing = try std.fmt.allocPrint(arena, "{s} is not set (needed by provider {s})", .{ names[0], p.name }) };
         },
         .command => |cmd| {
@@ -381,7 +390,7 @@ pub fn credential(io: Io, arena: Allocator, p: Provider, env: *const Environ.Map
                 error.OutOfMemory => |e| return e,
                 error.CommandFailed => return .{ .missing = try std.fmt.allocPrint(arena, "api_key_command of provider {s} failed or printed nothing", .{p.name}) },
             };
-            return .{ .ok = try bearer(arena, key) };
+            return .{ .ok = key };
         },
         .codex_login => {
             const path = try codexAuthPath(arena, env);
@@ -390,13 +399,9 @@ pub fn credential(io: Io, arena: Allocator, p: Provider, env: *const Environ.Map
                 error.NotLoggedIn => .{ .missing = try std.fmt.allocPrint(arena, "Codex login not found at {s}: run `codex login`", .{path}) },
                 error.NoToken => .{ .missing = try std.fmt.allocPrint(arena, "{s} has no ChatGPT login: run `codex login` and sign in with ChatGPT", .{path}) },
             };
-            return .{ .ok = try bearer(arena, token) };
+            return .{ .ok = token };
         },
     }
-}
-
-fn bearer(arena: Allocator, key: []const u8) Allocator.Error![]const u8 {
-    return std.fmt.allocPrint(arena, "Bearer {s}", .{key});
 }
 
 fn runKeyCommand(io: Io, arena: Allocator, cmd: []const u8) error{ CommandFailed, OutOfMemory }![]const u8 {
@@ -432,8 +437,6 @@ pub const SelectError = error{
     UnknownProvider,
     /// --provider and the --model prefix disagree.
     Conflict,
-    /// The provider exists but this build cannot call it yet.
-    NotImplemented,
     /// Nothing selected and no built-in provider has a credential.
     NoCredential,
 } || Allocator.Error;
@@ -488,7 +491,6 @@ pub fn select(
     const name = chosen.?;
     failed.* = name;
     const p = reg.get(name) orelse return error.UnknownProvider;
-    if (!p.available()) return error.NotImplemented;
 
     const model = for (layers) |l| {
         const m = l.model orelse continue;
@@ -504,11 +506,11 @@ fn byModel(model: []const u8) ?[]const u8 {
 
 fn firstConfigured(io: Io, arena: Allocator, reg: Registry, env: *const Environ.Map) SelectError![]const u8 {
     for (reg.providers) |p| {
-        if (p.source == .builtin and p.available() and try hasCredential(io, arena, p, env)) return p.name;
+        if (p.source == .builtin and try hasCredential(io, arena, p, env)) return p.name;
     }
     // A config-declared provider counts too, once nothing built in is set up.
     for (reg.providers) |p| {
-        if (p.source == .config and p.available() and p.auth != .command and try hasCredential(io, arena, p, env)) return p.name;
+        if (p.source == .config and p.auth != .command and try hasCredential(io, arena, p, env)) return p.name;
     }
     return error.NoCredential;
 }
@@ -631,7 +633,8 @@ test "selection order" {
 
     try testing.expectError(error.Conflict, select(testing.io, a, reg, &t.env, "openai", "relay/flux-dev", &failed));
     try testing.expectError(error.UnknownProvider, select(testing.io, a, reg, &t.env, "nope", null, &failed));
-    try testing.expectError(error.NotImplemented, select(testing.io, a, reg, &t.env, "gemini", null, &failed));
+    s = try select(testing.io, a, reg, &t.env, null, "gemini-3-pro-image", &failed);
+    try testing.expectEqualStrings("gemini", s.provider.name);
 }
 
 test "nothing configured" {
@@ -653,12 +656,12 @@ test "credential from env and command" {
     const relay = reg.get("relay").?.*;
     try testing.expect((try credential(testing.io, a, relay, &t.env)) == .missing);
     try t.env.put("RELAY_KEY", "k1");
-    try testing.expectEqualStrings("Bearer k1", (try credential(testing.io, a, relay, &t.env)).ok.?);
+    try testing.expectEqualStrings("k1", (try credential(testing.io, a, relay, &t.env)).ok.?);
 
     if (@import("builtin").os.tag != .windows) {
         var cmd = relay;
         cmd.auth = .{ .command = "printf ' k2\\n'" };
-        try testing.expectEqualStrings("Bearer k2", (try credential(testing.io, a, cmd, &t.env)).ok.?);
+        try testing.expectEqualStrings("k2", (try credential(testing.io, a, cmd, &t.env)).ok.?);
         cmd.auth = .{ .command = "exit 1" };
         try testing.expect((try credential(testing.io, a, cmd, &t.env)) == .missing);
     }

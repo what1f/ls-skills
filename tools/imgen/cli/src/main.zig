@@ -6,6 +6,9 @@ const Writer = std.Io.Writer;
 const Ctx = @import("ctx.zig").Ctx;
 const generate = @import("cmd/generate.zig");
 const providers = @import("cmd/providers.zig");
+const batch = @import("cmd/batch.zig");
+const cutout = @import("cmd/cutout.zig");
+const resize = @import("cmd/resize.zig");
 
 const name = "imgen";
 
@@ -24,6 +27,9 @@ const usage =
     \\
     \\Commands:
     \\  generate    Generate or edit images
+    \\  batch       Run many generate jobs from a JSONL file
+    \\  cutout      Turn a flat background color into transparency (local)
+    \\  resize      Shrink a PNG (local)
     \\  providers   List providers, credentials and model capabilities
     \\  version     Print version information
     \\
@@ -76,6 +82,9 @@ fn run(ctx: Ctx, args: []const [:0]const u8) !u8 {
     }
     if (eql(cmd, "version")) return version(rest, stdout, stderr);
     if (eql(cmd, "generate")) return generate.run(ctx, rest);
+    if (eql(cmd, "batch")) return batch.run(ctx, rest);
+    if (eql(cmd, "cutout")) return cutout.run(ctx, rest);
+    if (eql(cmd, "resize")) return resize.run(ctx, rest);
     if (eql(cmd, "providers")) return providers.run(ctx, rest);
     try stderr.print("unknown command \"{s}\"\n\n{s}", .{ cmd, usage });
     return clikit.exit.usage;
@@ -121,6 +130,13 @@ fn eql(a: []const u8, b: []const u8) bool {
 
 test {
     _ = @import("image/sniff.zig");
+    _ = @import("image/png.zig");
+    _ = @import("image/chroma.zig");
+    _ = @import("image/resize.zig");
+    _ = @import("provider/gemini.zig");
+    _ = batch;
+    _ = cutout;
+    _ = resize;
     _ = @import("output.zig");
     _ = @import("provider.zig");
     _ = @import("provider/openai.zig");

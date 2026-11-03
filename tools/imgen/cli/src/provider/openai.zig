@@ -22,6 +22,9 @@ pub const Request = struct {
     compression: ?u8 = null,
     images: []const InputImage = &.{},
     mask: ?InputImage = null,
+    /// Gemini only: `imageConfig.aspectRatio` and `imageSize`.
+    aspect_ratio: ?[]const u8 = null,
+    image_size: ?[]const u8 = null,
 
     pub fn isEdit(r: Request) bool {
         return r.images.len > 0;

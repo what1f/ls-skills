@@ -9,7 +9,8 @@ pub const usage =
     \\List image providers, their credentials and model capabilities.
     \\
     \\Providers come built in (openai, gemini, codex) or from the config file
-    \\shown as "config"; edit that JSON file to add OpenAI-compatible providers.
+    \\shown as "config"; edit that JSON file to add OpenAI- or Gemini-compatible
+    \\providers.
     \\
     \\Usage:
     \\  imgen providers [flags]
@@ -47,7 +48,6 @@ const ProviderOut = struct {
     name: []const u8,
     source: []const u8,
     protocol: []const u8,
-    available: bool,
     configured: bool,
     credential: []const u8,
     base_url: []const u8,
@@ -85,7 +85,6 @@ pub fn run(ctx: Ctx, args: []const [:0]const u8) !u8 {
             .name = p.name,
             .source = @tagName(p.source),
             .protocol = @tagName(p.protocol),
-            .available = p.available(),
             .configured = try provider.hasCredential(ctx.io, a, p, ctx.env),
             .credential = try provider.credentialSource(a, p, ctx.env),
             .base_url = p.base_url,
@@ -106,7 +105,7 @@ pub fn run(ctx: Ctx, args: []const [:0]const u8) !u8 {
         .text => {
             for (list) |p| {
                 const mark = if (selected != null and std.mem.eql(u8, selected.?.provider.name, p.name)) "*" else " ";
-                const state = if (!p.available) "not available yet" else if (p.configured) "ready" else "no credential";
+                const state = if (p.configured) "ready" else "no credential";
                 const model = if (selected != null and std.mem.eql(u8, selected.?.provider.name, p.name)) selected.?.model else p.default_model;
                 try ctx.stdout.print("{s} {s:<12} {s:<18} {s:<24} {s}\n", .{ mark, p.name, state, model, p.credential });
             }

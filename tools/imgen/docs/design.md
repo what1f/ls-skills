@@ -152,12 +152,12 @@ provider 确定后，模型取第一个「没写 provider 或写的正是这个 
 | --- | --- | --- | --- |
 | 鉴权 | `Authorization: Bearer $OPENAI_API_KEY` | 每次调用都重新读取 `auth.json` 的 `tokens.access_token`，不负责刷新（刷新由 Codex 管理） | `x-goog-api-key` |
 | 地址 | `{base}/images/generations`，带输入图时走 `{base}/images/edits` | `https://chatgpt.com/backend-api/codex`，路径和 openai 相同 | `{base}/v1beta/models/{model}:generateContent` |
-| 编辑请求格式 | multipart（一张图用 `image`，多张用 `image[]`，加 `mask`）；配置 `edit_format` 可改 | JSON：`images:[{image_url:<data URL>}]`、`mask:{image_url}`（该后端不接受 multipart） | `contents.parts` 里放 `inline_data` |
-| 画幅 | 映射成 `size`（规则见下文） | 后端忽略 `size`，在 prompt 末尾追加 `Aspect ratio W:H.`；传 `--size` 时给出 warning | `generationConfig.imageConfig.aspectRatio` 和 `imageSize` |
+| 编辑请求格式 | multipart（一张图用 `image`，多张用 `image[]`，加 `mask`）；配置 `edit_format` 可改 | JSON：`images:[{image_url:<data URL>}]`、`mask:{image_url}`（该后端不接受 multipart） | `contents[0].parts`：先放文字，再按顺序放 `inlineData{mimeType,data}` |
+| 画幅 | 映射成 `size`（规则见下文） | 后端忽略 `size`，在 prompt 末尾追加 `Aspect ratio W:H.`；传 `--size` 时给出 warning | `generationConfig.imageConfig.aspectRatio` 取最接近的受支持比例；传 `--size` 时再按长边选最小够用的 `imageSize` 档位（`1K`/`2K`/`4K`，2.5 不传）；对不上时给出 warning |
 | mask | 支持 | 支持 | 不支持 |
 | 原生透明背景 | 取决于模型（gpt-image-1.5 支持，gpt-image-2 不支持） | 支持 | 不支持 |
 | 输出格式 | `output_format` | 忽略 `output_format`，总是 PNG | 总是 PNG |
-| 返回 | `data[].b64_json`；兼容服务返回 `data[].url` 时不带鉴权头下载 | 同 openai | `candidates[].content.parts[].inline_data.data` |
+| 返回 | `data[].b64_json`；兼容服务返回 `data[].url` 时不带鉴权头下载 | 同 openai | 第一个非 thought 的 `candidates[0].content.parts[].inlineData.data`；`promptFeedback.blockReason` 或安全类 `finishReason` 映射为 `content_policy` |
 
 openai、codex 和配置里的 OpenAI 兼容服务共用一套协议代码，区别只在配置：base URL、凭证来源、编辑请求格式、模型能力。codex 用的是非公开接口，README 里标为实验性。
 
@@ -175,7 +175,7 @@ openai、codex 和配置里的 OpenAI 兼容服务共用一套协议代码，区
    - 在 prompt 末尾追加一段固定说明：「主体放在完全均匀的纯 `#00FF00` 背景上，没有阴影、渐变和反光，主体本身不含这种绿色」
    - 强制返回 PNG
    - 拿到图片后，在本地按 `cutout` 的默认参数抠图（`--key auto --soft --despill`）
-   - 输出 `transparent: "chroma-key"`，`warnings` 里附上透明像素占比
+   - 输出 `transparent: "chroma-key"`，每张图带 `transparent_ratio`（透明像素占比）；占比接近 0 时在 `warnings` 里提示背景可能没抠掉
 
    主体本身带绿色时，用 `--chroma-key #FF00FF` 换成品红背景。这个参数只在 chroma-key 模式下生效。
 
@@ -213,7 +213,7 @@ openai、codex 和配置里的 OpenAI 兼容服务共用一套协议代码，区
 ```
 main.zig            命令分发
 cmd/generate.zig    generate 和 batch 共用的执行器：展开 variant × n、并发、重试、写文件
-cmd/batch.zig       解析 JSONL、合并默认值
+cmd/batch.zig       解析 JSONL、合并默认值；所有行先规划，任何一行有错就在发请求前整体报错（`line N: …`），多行写同一路径也算错
 cmd/cutout.zig  cmd/resize.zig  cmd/providers.zig
 provider.zig        provider 注册表：内置 provider、读取 config.json、选择 provider 和模型、取凭证
 provider/openai.zig provider/codex.zig provider/gemini.zig   （codex 是 openai 协议的一套配置，codex.zig 只读登录 token）
@@ -244,9 +244,9 @@ output.zig          计算输出路径、检查文件是否已存在、改正扩
   - 规则
 - **references/prompting.md、sample-prompts.md**：改写自 imagegen，那边是 Apache-2.0 许可，需要保留出处声明。
 
-## 实现前要核实的事
+## 尚未核实
 
-- Gemini 当前的图像模型名、`imageConfig` 支持哪些比例和 `imageSize` 档位、返回图片的格式。
+- Gemini 没有用真实 key 跑过，请求和响应格式按下文的官方文档实现。
 - gpt-image-2 现在是否支持原生透明背景、是否支持 mask。
 - Zig 0.17 的 `std.http.Client` 走代理时的表现（`NO_PROXY` 不支持）。
 
@@ -254,3 +254,9 @@ output.zig          计算输出路径、检查文件是否已存在、改正扩
 
 - Codex 后端：模型名不校验（未知模型也能出图），`size` 和 `output_format` 被忽略，总是返回 PNG；画幅写进 prompt 有效（16:9 得到 1672×941）；`background: transparent` 返回 RGBA；JSON 形式的 edits 和 mask 都生效。错误体有 `{"detail":…}` 和 `{"error":{…}}` 两种。
 - Zig 0.17：`fetch` 的 `privileged_headers` 不会被发送，鉴权头要用 `headers.authorization`；stdout/stderr 要用 `File.Writer.initStreaming`，默认的 positional 模式在多个进程共用一个重定向文件时会互相覆盖；几 MB 的响应体用 `Writer.Allocating` 整体读入即可。
+- Gemini（[图像生成文档](https://ai.google.dev/gemini-api/docs/image-generation)、[generateContent 参考](https://ai.google.dev/api/generate-content)）：
+  - 模型：`gemini-nano-banana-2.1`（最新，作为默认）、`gemini-3.1-flash-image`、`gemini-3.1-flash-lite-image`、`gemini-3-pro-image`、`gemini-2.5-flash-image`（旧版，最多 3 张输入图）。
+  - `aspectRatio`：1:1、2:3、3:2、3:4、4:3、4:5、5:4、9:16、16:9、21:9；nano-banana-2.1 和 3.1-flash-image 另有 1:4、4:1、1:8、8:1。
+  - `imageSize`：`1K`、`2K`、`4K`（大写 K），3.1-flash-image 另有 `512`；2.5 不接受这个字段。
+  - 错误体是 `{"error":{"code","message","status"}}`；key 无效返回 400 加 "API key not valid"，按 `auth` 处理。
+  - 新的 Interactions API（`/v1beta/interactions`）也能出图，generateContent 仍受支持，先用后者。

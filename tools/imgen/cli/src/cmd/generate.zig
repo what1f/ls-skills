@@ -7,6 +7,9 @@ const openai = @import("../provider/openai.zig");
 const http = @import("../http.zig");
 const output = @import("../output.zig");
 const sniff = @import("../image/sniff.zig");
+const gemini = @import("../provider/gemini.zig");
+const png = @import("../image/png.zig");
+const chroma = @import("../image/chroma.zig");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -39,7 +42,11 @@ pub const usage =
     \\  --aspect W:H             Aspect ratio, e.g. 16:9
     \\  --size WxH               Exact size, when the model supports it
     \\  --quality Q              low | medium | high | auto
-    \\  --background B           auto | opaque | transparent
+    \\  --background B           auto | opaque | transparent; without native
+    \\                           transparency the model draws on a flat color
+    \\                           that is then removed locally
+    \\  --chroma-key #RRGGBB     That flat color (default #00ff00); use #ff00ff
+    \\                           when the subject is green
     \\  --output-format F        png | jpeg | webp (transparent forces png)
     \\  --compression 0-100      jpeg/webp compression
     \\
@@ -72,6 +79,7 @@ pub const Options = struct {
     size: ?Ratio = null,
     quality: ?[]const u8 = null,
     background: ?[]const u8 = null,
+    chroma_key: ?chroma.Rgb = null,
     output_format: ?sniff.Format = null,
     compression: ?u8 = null,
     out: ?[]const u8 = null,
@@ -108,7 +116,16 @@ const ParseResult = union(enum) {
 };
 
 fn parse(arena: Allocator, args: []const [:0]const u8) Allocator.Error!ParseResult {
-    var o: Options = .{};
+    const r = try parseInto(arena, .{}, args);
+    if (r == .ok) if (validate(r.ok)) |message| return .{ .fail = message };
+    return r;
+}
+
+/// Applies flags on top of `base`. Repeatable flags (--variant, --image)
+/// replace the base list when given. Does not check flag combinations; see
+/// `validate`.
+pub fn parseInto(arena: Allocator, base: Options, args: []const [:0]const u8) Allocator.Error!ParseResult {
+    var o = base;
     var variants: std.ArrayList([]const u8) = .empty;
     var images: std.ArrayList([]const u8) = .empty;
     var it: clikit.ArgIterator = .{ .args = args };
@@ -153,6 +170,8 @@ fn parse(arena: Allocator, args: []const [:0]const u8) Allocator.Error!ParseResu
         } else if (eql(u8, flag, "--background")) {
             if (!oneOf(v, &.{ "auto", "opaque", "transparent" })) return .{ .fail = "--background must be auto, opaque or transparent" };
             o.background = v;
+        } else if (eql(u8, flag, "--chroma-key")) {
+            o.chroma_key = chroma.parseHex(v) orelse return .{ .fail = "--chroma-key must look like #00ff00" };
         } else if (eql(u8, flag, "--output-format")) {
             o.output_format = sniff.Format.parse(v) orelse return .{ .fail = "--output-format must be png, jpeg or webp" };
         } else if (eql(u8, flag, "--compression")) {
@@ -173,23 +192,27 @@ fn parse(arena: Allocator, args: []const [:0]const u8) Allocator.Error!ParseResu
             o.format = clikit.Format.parse(v) orelse return .{ .fail = "--format must be text or json" };
         } else unreachable;
     }
-    o.variants = variants.items;
-    o.images = images.items;
-
-    if ((o.prompt == null) == (o.prompt_file == null)) return .{ .fail = "pass exactly one of --prompt or --prompt-file" };
-    if ((o.out == null) == (o.out_dir == null)) return .{ .fail = "pass exactly one of --out or --out-dir" };
-    if (o.aspect != null and o.size != null) return .{ .fail = "pass --aspect or --size, not both" };
-    if (o.mask != null and o.images.len == 0) return .{ .fail = "--mask needs --image" };
-    if (o.images.len > 16) return .{ .fail = "at most 16 --image" };
-    if (@max(o.variants.len, 1) * o.n > max_total) return .{ .fail = "variants x n must be at most 10 images" };
+    if (variants.items.len > 0) o.variants = variants.items;
+    if (images.items.len > 0) o.images = images.items;
     return .{ .ok = o };
+}
+
+/// Checks flag combinations; returns the problem, if any.
+pub fn validate(o: Options) ?[]const u8 {
+    if ((o.prompt == null) == (o.prompt_file == null)) return "pass exactly one of --prompt or --prompt-file";
+    if ((o.out == null) == (o.out_dir == null)) return "pass exactly one of --out or --out-dir";
+    if (o.aspect != null and o.size != null) return "pass --aspect or --size, not both";
+    if (o.mask != null and o.images.len == 0) return "--mask needs --image";
+    if (o.images.len > 16) return "at most 16 --image";
+    if (@max(o.variants.len, 1) * o.n > max_total) return "variants x n must be at most 10 images";
+    return null;
 }
 
 const value_flags = [_][]const u8{
     "--prompt-file",   "--prompt",      "--variant", "--n",    "--image",       "--mask",
     "--provider",      "--model",       "--aspect",  "--size", "--quality",     "--background",
     "--output-format", "--compression", "--out-dir", "--out",  "--concurrency", "--timeout",
-    "--format",
+    "--format",        "--chroma-key",
 };
 
 /// Matches `--flag` or `--flag=value` against the known value flags.
@@ -207,11 +230,28 @@ fn oneOf(v: []const u8, options: []const []const u8) bool {
 // ---------------------------------------------------------------------------
 // Planning
 
-const Job = struct {
+/// What every request of one plan shares.
+pub const Call = struct {
+    provider: *const provider.Provider,
+    model: []const u8,
+    url: []const u8,
+    request: openai.Request,
+    /// Raw key or token, set by `authorize`; null for `auth = none`.
+    key: ?[]const u8 = null,
+    /// Remove the flat background locally after download.
+    chroma: bool = false,
+};
+
+pub const Job = struct {
+    call: *const Call,
     variant: ?[]const u8,
     prompt: []const u8,
     path: []const u8,
+    /// Shown in progress lines.
+    label: []const u8 = "",
     outcome: Outcome = .{ .failure = .{ .code = "cancelled", .message = "not run" } },
+    /// From the last response, for the next retry.
+    retry_after: ?u32 = null,
 };
 
 const Saved = struct {
@@ -222,6 +262,8 @@ const Saved = struct {
     bytes: usize,
     /// Set when the extension was changed to match the returned format.
     renamed_from: ?[]const u8 = null,
+    /// Chroma-key mode only.
+    transparent_ratio: ?f32 = null,
 };
 
 const Outcome = union(enum) {
@@ -229,42 +271,49 @@ const Outcome = union(enum) {
     failure: Failure,
 };
 
-const Plan = struct {
-    provider: *const provider.Provider,
-    model: []const u8,
-    url: []const u8,
-    request: openai.Request,
+pub const Plan = struct {
+    call: *Call,
     image_paths: []const []const u8,
+    mask_path: ?[]const u8,
     transparent: ?[]const u8,
     warnings: std.ArrayList([]const u8),
     jobs: []Job,
 };
 
-/// Either a plan or the failure that stops the command before any request.
-const PlanResult = union(enum) {
+/// A failure that stops a command before any request.
+pub const Stop = struct { failure: Failure, exit: u8 };
+
+pub const PlanResult = union(enum) {
     plan: Plan,
-    fail: struct { failure: Failure, exit: u8 },
+    fail: Stop,
 };
 
-fn failWith(code: []const u8, message: []const u8, exit: u8) PlanResult {
-    return .{ .fail = .{ .failure = .{ .code = code, .message = message }, .exit = exit } };
+fn stop(code: []const u8, message: []const u8, exit: u8) Stop {
+    return .{ .failure = .{ .code = code, .message = message }, .exit = exit };
 }
 
-fn makePlan(ctx: Ctx, o: Options) !PlanResult {
+fn failWith(code: []const u8, message: []const u8, exit: u8) PlanResult {
+    return .{ .fail = stop(code, message, exit) };
+}
+
+pub fn loadRegistry(ctx: Ctx) !union(enum) { reg: provider.Registry, fail: Stop } {
+    var problem: []const u8 = "";
+    const reg = provider.load(ctx.io, ctx.arena, ctx.env, &problem) catch |err| return switch (err) {
+        error.OutOfMemory => |e| e,
+        error.ConfigInvalid => .{ .fail = stop("config", problem, clikit.exit.usage) },
+    };
+    return .{ .reg = reg };
+}
+
+pub fn makePlan(ctx: Ctx, reg: provider.Registry, o: Options) !PlanResult {
     const a = ctx.arena;
 
-    var problem: []const u8 = "";
-    const reg = provider.load(ctx.io, a, ctx.env, &problem) catch |err| return switch (err) {
-        error.OutOfMemory => |e| e,
-        error.ConfigInvalid => failWith("config", problem, clikit.exit.usage),
-    };
     var failed: []const u8 = "";
     const sel = provider.select(ctx.io, a, reg, ctx.env, o.provider, o.model, &failed) catch |err| return switch (err) {
         error.OutOfMemory => |e| e,
         error.UnknownProvider => failWith("usage", try std.fmt.allocPrint(a, "unknown provider \"{s}\"; add it to {s} (see 'imgen providers')", .{ failed, reg.config_path }), clikit.exit.usage),
         error.Conflict => failWith("usage", "--provider and the provider prefix of --model differ", clikit.exit.usage),
-        error.NotImplemented => failWith("unsupported", try std.fmt.allocPrint(a, "provider {s} is not available in this version yet", .{failed}), clikit.exit.usage),
-        error.NoCredential => failWith("auth", "no image provider is configured: set OPENAI_API_KEY, run `codex login`, or add a provider to the config file (see 'imgen providers')", clikit.exit.needs_human),
+        error.NoCredential => failWith("auth", "no image provider is configured: set OPENAI_API_KEY or GEMINI_API_KEY, run `codex login`, or add a provider to the config file (see 'imgen providers')", clikit.exit.needs_human),
     };
     const pv = sel.provider;
     const caps = pv.caps(sel.model);
@@ -277,11 +326,13 @@ fn makePlan(ctx: Ctx, o: Options) !PlanResult {
     // Prompt and size.
     const prompt = try readPrompt(ctx, o) orelse return failWith("usage", "cannot read --prompt-file", clikit.exit.usage);
     var size: ?[]const u8 = null;
-    var suffix: []const u8 = "";
+    var aspect_ratio: ?[]const u8 = null;
+    var image_size: ?[]const u8 = null;
+    var aspect_suffix: []const u8 = "";
     if (o.aspect orelse o.size) |r| switch (caps.sizes) {
         .prompt => {
             const ratio = r.reduced();
-            suffix = try std.fmt.allocPrint(a, "\n\nAspect ratio {d}:{d}.", .{ ratio.w, ratio.h });
+            aspect_suffix = try std.fmt.allocPrint(a, "\n\nAspect ratio {d}:{d}.", .{ ratio.w, ratio.h });
             if (o.size != null) try warnings.append(a, try std.fmt.allocPrint(a, "{s} does not take exact sizes; asked for aspect ratio {d}:{d} in the prompt instead", .{ pv.name, ratio.w, ratio.h }));
         },
         .flexible, .fixed => {
@@ -292,18 +343,38 @@ fn makePlan(ctx: Ctx, o: Options) !PlanResult {
                 try warnings.append(a, try std.fmt.allocPrint(a, "{s} only has fixed sizes; using {s}", .{ sel.model, size.? }));
             }
         },
+        .ratio => {
+            const cfg = try gemini.imageConfig(a, sel.model, r.w, r.h, o.size != null);
+            aspect_ratio = cfg.aspect_ratio;
+            image_size = cfg.image_size;
+            if (cfg.warning) |w| try warnings.append(a, w);
+        },
     };
 
     // Background and format.
     var transparent: ?[]const u8 = null;
+    var use_chroma = false;
+    var chroma_suffix: []const u8 = "";
     var background = o.background;
     var format: sniff.Format = o.output_format orelse .png;
     if (o.background) |b| if (std.mem.eql(u8, b, "transparent")) {
-        if (!caps.native_transparent) return failWith("unsupported", try std.fmt.allocPrint(a, "{s} cannot make transparent backgrounds yet", .{sel.model}), clikit.exit.usage);
-        transparent = "native";
         if (format != .png) try warnings.append(a, "transparent background needs PNG; saving as png");
         format = .png;
+        if (caps.native_transparent) {
+            transparent = "native";
+        } else {
+            transparent = "chroma-key";
+            use_chroma = true;
+            background = null;
+            const k = o.chroma_key orelse chroma.Rgb{ 0, 255, 0 };
+            chroma_suffix = try std.fmt.allocPrint(a,
+                \\
+                \\
+                \\Background: a perfectly flat, uniform solid #{X:0>2}{X:0>2}{X:0>2} chroma-key background filling the whole canvas, with no shadows, gradients, texture, reflections or vignetting. Do not use #{X:0>2}{X:0>2}{X:0>2} or similar colors anywhere in the subject.
+            , .{ k[0], k[1], k[2], k[0], k[1], k[2] });
+        }
     };
+    if (o.chroma_key != null and !use_chroma) try warnings.append(a, "--chroma-key only applies to --background transparent on models without native transparency; ignored");
     if (!caps.output_format) {
         if (format != .png) try warnings.append(a, try std.fmt.allocPrint(a, "{s} always returns PNG; saving as png", .{pv.name}));
         if (o.compression != null) try warnings.append(a, "--compression has no effect on PNG output");
@@ -328,6 +399,31 @@ fn makePlan(ctx: Ctx, o: Options) !PlanResult {
         mask = m;
     }
 
+    const request: openai.Request = .{
+        .model = sel.model,
+        .prompt = prompt,
+        .size = size,
+        .quality = if (caps.quality) o.quality else null,
+        .background = background,
+        .output_format = if (caps.output_format) @tagName(format) else null,
+        .compression = if (caps.output_format and format != .png) o.compression else null,
+        .images = inputs,
+        .mask = mask,
+        .aspect_ratio = aspect_ratio,
+        .image_size = image_size,
+    };
+    const call = try a.create(Call);
+    call.* = .{
+        .provider = pv,
+        .model = sel.model,
+        .url = switch (pv.protocol) {
+            .gemini => try std.fmt.allocPrint(a, "{s}{s}", .{ pv.base_url, try gemini.path(a, sel.model) }),
+            .openai => try std.fmt.allocPrint(a, "{s}{s}", .{ pv.base_url, request.path() }),
+        },
+        .request = request,
+        .chroma = use_chroma,
+    };
+
     // Jobs and output paths.
     const variant_list: []const ?[]const u8 = if (o.variants.len == 0) &.{null} else blk: {
         const list = try a.alloc(?[]const u8, o.variants.len);
@@ -341,39 +437,37 @@ fn makePlan(ctx: Ctx, o: Options) !PlanResult {
     for (jobs, 0..) |*job, i| {
         const variant = variant_list[i / o.n];
         job.* = .{
+            .call = call,
             .variant = variant,
             .prompt = if (variant) |v|
-                try std.fmt.allocPrint(a, "{s}\n{s}{s}", .{ prompt, v, suffix })
+                try std.fmt.allocPrint(a, "{s}\n{s}{s}{s}", .{ prompt, v, chroma_suffix, aspect_suffix })
             else
-                try std.fmt.allocPrint(a, "{s}{s}", .{ prompt, suffix }),
+                try std.fmt.allocPrint(a, "{s}{s}{s}", .{ prompt, chroma_suffix, aspect_suffix }),
             .path = paths[i],
+            .label = paths[i],
         };
         if (!o.force and output.fileExists(ctx.io, job.path)) {
             return failWith("exists", try std.fmt.allocPrint(a, "{s} already exists (use --force to overwrite)", .{job.path}), clikit.exit.usage);
         }
     }
 
-    const request: openai.Request = .{
-        .model = sel.model,
-        .prompt = prompt,
-        .size = size,
-        .quality = o.quality,
-        .background = background,
-        .output_format = if (caps.output_format) @tagName(format) else null,
-        .compression = if (caps.output_format and format != .png) o.compression else null,
-        .images = inputs,
-        .mask = mask,
-    };
     return .{ .plan = .{
-        .provider = pv,
-        .model = sel.model,
-        .url = try std.fmt.allocPrint(a, "{s}{s}", .{ pv.base_url, request.path() }),
-        .request = request,
+        .call = call,
         .image_paths = o.images,
+        .mask_path = o.mask,
         .transparent = transparent,
         .warnings = warnings,
         .jobs = jobs,
     } };
+}
+
+/// Reads the call's credential into `call.key`.
+pub fn authorize(ctx: Ctx, call: *Call) !?Stop {
+    switch (try provider.credential(ctx.io, ctx.arena, call.provider.*, ctx.env)) {
+        .ok => |key| call.key = key,
+        .missing => |message| return stop("auth", message, clikit.exit.needs_human),
+    }
+    return null;
 }
 
 /// gpt-image-1.x sizes: the one whose ratio is closest to `r`.
@@ -437,26 +531,85 @@ fn readImage(ctx: Ctx, path: []const u8) !?openai.InputImage {
 // ---------------------------------------------------------------------------
 // Running
 
+pub const RunOptions = struct {
+    concurrency: u8,
+    timeout: u32,
+    force: bool,
+    max_attempts: u8 = 1,
+    /// After the first failed job, skip the ones not started yet.
+    fail_fast: bool = false,
+    /// Write start, retry and finish lines to stderr.
+    progress: bool = false,
+};
+
 const Shared = struct {
     io: Io,
     gpa: Allocator,
     arena: Allocator,
+    stderr: *Writer,
     client: *std.http.Client,
-    url: []const u8,
-    authorization: ?[]const u8,
-    edit_format: provider.EditFormat,
-    request: openai.Request,
-    jobs: []Job,
-    force: bool,
-    timeout: u32,
+    jobs: []const *Job,
+    ro: RunOptions,
+    mutex: Io.Mutex = .init,
     next: std.atomic.Value(usize) = .init(0),
+    failed: std.atomic.Value(bool) = .init(false),
+
+    fn note(sh: *Shared, comptime fmt: []const u8, args: anytype) void {
+        if (!sh.ro.progress) return;
+        sh.mutex.lockUncancelable(sh.io);
+        defer sh.mutex.unlock(sh.io);
+        sh.stderr.print(fmt ++ "\n", args) catch {};
+        sh.stderr.flush() catch {};
+    }
 };
+
+/// Runs every job, filling in `outcome`. Never fails: problems end up in
+/// the outcomes.
+pub fn execute(ctx: Ctx, client: *std.http.Client, jobs: []const *Job, ro: RunOptions) void {
+    var sh: Shared = .{ .io = ctx.io, .gpa = ctx.gpa, .arena = ctx.arena, .stderr = ctx.stderr, .client = client, .jobs = jobs, .ro = ro };
+    var group: Io.Group = .init;
+    const workers = @min(@max(ro.concurrency, 1), jobs.len);
+    for (0..workers) |_| {
+        group.concurrent(ctx.io, worker, .{&sh}) catch group.async(ctx.io, worker, .{&sh});
+    }
+    group.await(ctx.io) catch {};
+}
 
 fn worker(sh: *Shared) Io.Cancelable!void {
     while (true) {
         const i = sh.next.fetchAdd(1, .monotonic);
         if (i >= sh.jobs.len) return;
-        sh.jobs[i].outcome = runWithTimeout(sh, &sh.jobs[i]);
+        const job = sh.jobs[i];
+        if (sh.ro.fail_fast and sh.failed.load(.monotonic)) {
+            job.outcome = .{ .failure = .{ .code = "cancelled", .message = "skipped after an earlier failure (--fail-fast)" } };
+            continue;
+        }
+        sh.note("start {s}", .{job.label});
+        var tries: u8 = 0;
+        while (true) {
+            tries += 1;
+            job.retry_after = null;
+            job.outcome = runWithTimeout(sh, job);
+            const f = switch (job.outcome) {
+                .saved => |s| {
+                    sh.note("done {s}", .{s.path});
+                    break;
+                },
+                .failure => |f| f,
+            };
+            if (!f.retryable or tries >= sh.ro.max_attempts or (sh.ro.fail_fast and sh.failed.load(.monotonic))) {
+                sh.failed.store(true, .monotonic);
+                sh.note("failed {s}: {s}", .{ job.label, f.message });
+                break;
+            }
+            const backoff: u32 = @as(u32, 1) << @intCast(@min(tries - 1, 6));
+            const delay = @min(job.retry_after orelse backoff, 60);
+            sh.note("retry {s} in {d}s: {s}", .{ job.label, delay, f.message });
+            Io.sleep(sh.io, .fromSeconds(delay), .awake) catch {
+                job.outcome = cancelled;
+                return;
+            };
+        }
     }
 }
 
@@ -468,7 +621,7 @@ fn runWithTimeout(sh: *Shared, job: *Job) Outcome {
     var buf: [2]U = undefined;
     var sel: Io.Select(U) = .init(sh.io, &buf);
     sel.concurrent(.done, attempt, .{ sh, job }) catch return attempt(sh, job);
-    sel.concurrent(.timeout, Io.sleep, .{ sh.io, .fromSeconds(sh.timeout), .awake }) catch {
+    sel.concurrent(.timeout, Io.sleep, .{ sh.io, .fromSeconds(sh.ro.timeout), .awake }) catch {
         // No spare concurrency for the timer: wait without a timeout.
         const r = sel.await() catch {
             sel.cancelDiscard();
@@ -486,7 +639,7 @@ fn runWithTimeout(sh: *Shared, job: *Job) Outcome {
         .done => |o| o,
         .timeout => .{ .failure = .{
             .code = "timeout",
-            .message = std.fmt.allocPrint(sh.arena, "no response within {d}s", .{sh.timeout}) catch "request timed out",
+            .message = std.fmt.allocPrint(sh.arena, "no response within {d}s", .{sh.ro.timeout}) catch "request timed out",
             .retryable = true,
         } },
     };
@@ -502,53 +655,108 @@ fn attempt(sh: *Shared, job: *Job) Outcome {
 }
 
 fn attemptInner(sh: *Shared, job: *Job) Allocator.Error!Outcome {
+    const call = job.call;
     var payload: Writer.Allocating = .init(sh.gpa);
     defer payload.deinit();
-    var req = sh.request;
+    var req = call.request;
     req.prompt = job.prompt;
-    var content_type: []const u8 = "application/json";
-    if (req.isEdit() and sh.edit_format == .multipart) {
-        var rnd: [12]u8 = undefined;
-        sh.io.random(&rnd);
-        const boundary = try std.fmt.allocPrint(sh.arena, "imgen-{x}", .{rnd});
-        content_type = try std.fmt.allocPrint(sh.arena, "multipart/form-data; boundary={s}", .{boundary});
-        openai.writeMultipart(&payload.writer, req, boundary) catch return error.OutOfMemory;
-    } else {
-        openai.writeBody(&payload.writer, req) catch return error.OutOfMemory;
-    }
 
-    const resp = switch (try send(sh, sh.url, .{ .authorization = sh.authorization, .content_type = content_type, .payload = payload.written() })) {
+    var opts: http.Options = .{ .content_type = "application/json" };
+    var gemini_headers: [1]std.http.Header = undefined;
+    switch (call.provider.protocol) {
+        .gemini => {
+            gemini.writeBody(&payload.writer, req) catch return error.OutOfMemory;
+            if (call.key) |k| {
+                gemini_headers[0] = .{ .name = "x-goog-api-key", .value = k };
+                opts.extra_headers = &gemini_headers;
+            }
+        },
+        .openai => {
+            if (call.key) |k| opts.authorization = try std.fmt.allocPrint(sh.arena, "Bearer {s}", .{k});
+            if (req.isEdit() and call.provider.edit_format == .multipart) {
+                var rnd: [12]u8 = undefined;
+                sh.io.random(&rnd);
+                const boundary = try std.fmt.allocPrint(sh.arena, "imgen-{x}", .{rnd});
+                opts.content_type = try std.fmt.allocPrint(sh.arena, "multipart/form-data; boundary={s}", .{boundary});
+                openai.writeMultipart(&payload.writer, req, boundary) catch return error.OutOfMemory;
+            } else {
+                openai.writeBody(&payload.writer, req) catch return error.OutOfMemory;
+            }
+        },
+    }
+    opts.payload = payload.written();
+
+    const resp = switch (try send(sh, call.url, opts)) {
         .ok => |r| r,
         .failure => |f| return .{ .failure = f },
     };
     defer sh.gpa.free(resp.body);
-    if (resp.status / 100 != 2) return .{ .failure = try openai.mapError(sh.arena, resp.status, resp.body) };
+    if (resp.status / 100 != 2) {
+        job.retry_after = resp.retry_after;
+        return .{ .failure = switch (call.provider.protocol) {
+            .gemini => try gemini.mapError(sh.arena, resp.status, resp.body),
+            .openai => try openai.mapError(sh.arena, resp.status, resp.body),
+        } };
+    }
 
-    const decoded = openai.decodeImage(sh.gpa, sh.arena, resp.body) catch |err| switch (err) {
-        error.OutOfMemory => |e| return e,
-        error.BadResponse => return .{ .failure = .{ .code = "provider_error", .message = "response carried no image" } },
-    };
-    const img = switch (decoded) {
-        .bytes => |b| b,
-        // Download without credentials: the URL usually points at a CDN.
-        .url => |url| switch (try send(sh, url, .{ .method = .GET })) {
+    const no_image: Outcome = .{ .failure = .{ .code = "provider_error", .message = "response carried no image" } };
+    const img: []u8 = switch (call.provider.protocol) {
+        .gemini => switch (gemini.decodeImage(sh.gpa, sh.arena, resp.body) catch |err| switch (err) {
+            error.OutOfMemory => |e| return e,
+            error.BadResponse => return no_image,
+        }) {
+            .bytes => |b| b,
             .failure => |f| return .{ .failure = f },
-            .ok => |r| if (r.status / 100 == 2) r.body else {
-                sh.gpa.free(r.body);
-                return .{ .failure = .{ .code = "provider_error", .message = try std.fmt.allocPrint(sh.arena, "image download failed: HTTP {d}", .{r.status}), .retryable = r.status >= 500 } };
+        },
+        .openai => switch (openai.decodeImage(sh.gpa, sh.arena, resp.body) catch |err| switch (err) {
+            error.OutOfMemory => |e| return e,
+            error.BadResponse => return no_image,
+        }) {
+            .bytes => |b| b,
+            // Download without credentials: the URL usually points at a CDN.
+            .url => |url| switch (try send(sh, url, .{ .method = .GET })) {
+                .failure => |f| return .{ .failure = f },
+                .ok => |r| if (r.status / 100 == 2) r.body else {
+                    sh.gpa.free(r.body);
+                    return .{ .failure = .{ .code = "provider_error", .message = try std.fmt.allocPrint(sh.arena, "image download failed: HTTP {d}", .{r.status}), .retryable = r.status >= 500 } };
+                },
             },
         },
     };
     defer sh.gpa.free(img);
     const info = sniff.sniff(img) orelse return .{ .failure = .{ .code = "provider_error", .message = "response is not a PNG, JPEG or WebP image" } };
 
+    if (call.chroma) return cutoutAndSave(sh, job, img, info.format);
+
     var saved: Saved = .{ .path = job.path, .format = info.format, .width = info.width, .height = info.height, .bytes = img.len };
     if (try output.fixExt(sh.arena, job.path, info.format)) |p| {
         saved.renamed_from = job.path;
         saved.path = p;
     }
-    if (writeFile(sh.io, saved.path, img, sh.force)) |failure| return .{ .failure = failure };
+    if (output.writeFile(sh.io, saved.path, img, sh.ro.force)) |failure| return .{ .failure = failure };
     return .{ .saved = saved };
+}
+
+/// Chroma-key mode: remove the flat background with cutout's defaults.
+fn cutoutAndSave(sh: *Shared, job: *Job, data: []const u8, format: sniff.Format) Allocator.Error!Outcome {
+    if (format != .png) return .{ .failure = .{ .code = "unsupported", .message = try std.fmt.allocPrint(sh.arena, "{s} returned {s}; the background can only be removed from PNG", .{ job.call.model, @tagName(format) }) } };
+    const image = png.decode(sh.gpa, data) catch |err| return switch (err) {
+        error.OutOfMemory => |e| e,
+        else => .{ .failure = .{ .code = "provider_error", .message = "returned PNG could not be decoded" } },
+    };
+    defer image.deinit(sh.gpa);
+    const stats = try chroma.remove(sh.gpa, image, .{});
+    const encoded = try png.encode(sh.gpa, image);
+    defer sh.gpa.free(encoded);
+    if (output.writeFile(sh.io, job.path, encoded, sh.ro.force)) |failure| return .{ .failure = failure };
+    return .{ .saved = .{
+        .path = job.path,
+        .format = .png,
+        .width = image.width,
+        .height = image.height,
+        .bytes = encoded.len,
+        .transparent_ratio = stats.transparent_ratio,
+    } };
 }
 
 const Sent = union(enum) {
@@ -570,14 +778,22 @@ fn send(sh: *Shared, url: []const u8, o: http.Options) Allocator.Error!Sent {
     return .{ .ok = resp };
 }
 
-fn writeFile(io: Io, path: []const u8, data: []const u8, force: bool) ?Failure {
-    const cwd = Io.Dir.cwd();
-    if (std.fs.path.dirname(path)) |dir| cwd.createDirPath(io, dir) catch return .{ .code = "write_failed", .message = "cannot create the output directory" };
-    cwd.writeFile(io, .{ .sub_path = path, .data = data, .flags = .{ .exclusive = !force } }) catch |err| return switch (err) {
-        error.PathAlreadyExists => .{ .code = "exists", .message = "file appeared while generating (use --force to overwrite)" },
-        else => .{ .code = "write_failed", .message = @errorName(err) },
+/// Adds warnings that depend on the results: renamed files and cutouts
+/// that removed nothing.
+pub fn resultWarnings(a: Allocator, jobs: []const Job, warnings: *std.ArrayList([]const u8)) !void {
+    for (jobs) |job| switch (job.outcome) {
+        .saved => |s| {
+            if (s.renamed_from) |from| try warnings.append(a, try std.fmt.allocPrint(a, "{s}: got {s}, saved as {s}", .{ from, @tagName(s.format), s.path }));
+            if (s.transparent_ratio) |r| if (r < 0.001) try warnings.append(a, try std.fmt.allocPrint(a, "{s}: no background was removed; the model probably did not draw a flat background. Regenerate, try another --chroma-key, or tune with 'imgen cutout'", .{s.path}));
+        },
+        .failure => {},
     };
-    return null;
+}
+
+pub fn newClient(ctx: Ctx) std.http.Client {
+    var client: std.http.Client = .{ .allocator = ctx.gpa, .io = ctx.io };
+    client.initDefaultProxies(ctx.arena, ctx.env) catch {};
+    return client;
 }
 
 // ---------------------------------------------------------------------------
@@ -592,63 +808,51 @@ pub fn run(ctx: Ctx, args: []const [:0]const u8) !u8 {
         .fail => |message| return clikit.fail(ctx.stdout, ctx.stderr, clikit.scanFormat(args), .{ .code = "usage", .message = message }, clikit.exit.usage),
         .ok => |o| o,
     };
-    var plan = switch (try makePlan(ctx, o)) {
+    const reg = switch (try loadRegistry(ctx)) {
+        .fail => |f| return clikit.fail(ctx.stdout, ctx.stderr, o.format, f.failure, f.exit),
+        .reg => |r| r,
+    };
+    var plan = switch (try makePlan(ctx, reg, o)) {
         .fail => |f| return clikit.fail(ctx.stdout, ctx.stderr, o.format, f.failure, f.exit),
         .plan => |p| p,
     };
 
     if (o.dry_run) {
-        try writeDryRun(ctx, o, plan);
+        const data = try dryRunData(ctx.arena, plan);
+        switch (o.format) {
+            .json => {
+                try std.json.Stringify.value(.{ .ok = true, .data = data }, json_options, ctx.stdout);
+                try ctx.stdout.writeByte('\n');
+            },
+            .text => try writeDryRunText(ctx, plan),
+        }
         return clikit.exit.ok;
     }
 
-    const authorization = switch (try provider.credential(ctx.io, ctx.arena, plan.provider.*, ctx.env)) {
-        .ok => |header| header,
-        .missing => |message| return clikit.fail(ctx.stdout, ctx.stderr, o.format, .{ .code = "auth", .message = message }, clikit.exit.needs_human),
-    };
+    if (try authorize(ctx, plan.call)) |f| return clikit.fail(ctx.stdout, ctx.stderr, o.format, f.failure, f.exit);
 
-    var client: std.http.Client = .{ .allocator = ctx.gpa, .io = ctx.io };
+    var client = newClient(ctx);
     defer client.deinit();
-    client.initDefaultProxies(ctx.arena, ctx.env) catch {};
 
     const start = Io.Timestamp.now(ctx.io, .awake);
-    if (o.format == .text) try ctx.stderr.print("generating {d} image(s) with {s} {s}\n", .{ plan.jobs.len, plan.provider.name, plan.model });
+    if (o.format == .text) try ctx.stderr.print("generating {d} image(s) with {s} {s}\n", .{ plan.jobs.len, plan.call.provider.name, plan.call.model });
     try ctx.stderr.flush();
 
-    var sh: Shared = .{
-        .io = ctx.io,
-        .gpa = ctx.gpa,
-        .arena = ctx.arena,
-        .client = &client,
-        .url = plan.url,
-        .authorization = authorization,
-        .edit_format = plan.provider.edit_format,
-        .request = plan.request,
-        .jobs = plan.jobs,
-        .force = o.force,
-        .timeout = o.timeout,
-    };
-    var group: Io.Group = .init;
-    const workers = @min(o.concurrency, plan.jobs.len);
-    for (0..workers) |_| {
-        group.concurrent(ctx.io, worker, .{&sh}) catch group.async(ctx.io, worker, .{&sh});
-    }
-    group.await(ctx.io) catch {};
+    const ptrs = try ctx.arena.alloc(*Job, plan.jobs.len);
+    for (plan.jobs, ptrs) |*j, *p| p.* = j;
+    execute(ctx, &client, ptrs, .{ .concurrency = o.concurrency, .timeout = o.timeout, .force = o.force });
     const elapsed_ms = start.untilNow(ctx.io, .awake).toMilliseconds();
 
-    for (plan.jobs) |job| switch (job.outcome) {
-        .saved => |s| if (s.renamed_from) |from| try plan.warnings.append(ctx.arena, try std.fmt.allocPrint(ctx.arena, "{s}: got {s}, saved as {s}", .{ from, @tagName(s.format), s.path })),
-        .failure => {},
-    };
+    try resultWarnings(ctx.arena, plan.jobs, &plan.warnings);
     return writeResult(ctx, o, plan, elapsed_ms);
 }
 
 // ---------------------------------------------------------------------------
 // Output
 
-const json_options: std.json.Stringify.Options = .{ .emit_null_optional_fields = false };
+pub const json_options: std.json.Stringify.Options = .{ .emit_null_optional_fields = false };
 
-const ImageOut = struct {
+pub const ImageOut = struct {
     ok: bool,
     path: ?[]const u8 = null,
     variant: ?[]const u8 = null,
@@ -656,36 +860,50 @@ const ImageOut = struct {
     width: ?u32 = null,
     height: ?u32 = null,
     bytes: ?usize = null,
+    transparent_ratio: ?f64 = null,
     @"error": ?Failure = null,
 };
 
-fn writeResult(ctx: Ctx, o: Options, plan: Plan, elapsed_ms: i64) !u8 {
-    const a = ctx.arena;
-    const images = try a.alloc(ImageOut, plan.jobs.len);
-    var failed: usize = 0;
-    var first_failure: ?Failure = null;
-    var same_code = true;
-    for (plan.jobs, images) |job, *img| switch (job.outcome) {
-        .saved => |s| img.* = .{ .ok = true, .path = s.path, .variant = job.variant, .format = @tagName(s.format), .width = s.width, .height = s.height, .bytes = s.bytes },
-        .failure => |f| {
-            img.* = .{ .ok = false, .variant = job.variant, .@"error" = f };
-            failed += 1;
-            if (first_failure) |ff| {
-                if (!std.mem.eql(u8, ff.code, f.code)) same_code = false;
-            } else first_failure = f;
+pub fn imagesOut(a: Allocator, jobs: []const Job) ![]ImageOut {
+    const images = try a.alloc(ImageOut, jobs.len);
+    for (jobs, images) |job, *img| img.* = switch (job.outcome) {
+        .saved => |s| .{
+            .ok = true,
+            .path = s.path,
+            .variant = job.variant,
+            .format = @tagName(s.format),
+            .width = s.width,
+            .height = s.height,
+            .bytes = s.bytes,
+            .transparent_ratio = if (s.transparent_ratio) |r| @import("cutout.zig").ratio(r) else null,
         },
+        .failure => |f| .{ .ok = false, .variant = job.variant, .@"error" = f },
     };
+    return images;
+}
 
-    // All failed for one reason: report that reason. Otherwise partial_failure.
-    const top: ?Failure = if (failed == 0) null else if (failed == plan.jobs.len and same_code) first_failure.? else .{
-        .code = "partial_failure",
-        .message = try std.fmt.allocPrint(a, "{d} of {d} images failed", .{ failed, plan.jobs.len }),
+/// All failed for one reason: that reason. Some failed: partial_failure.
+pub fn topFailure(a: Allocator, images: []const ImageOut) !?Failure {
+    var failed: usize = 0;
+    var first: ?Failure = null;
+    var same_code = true;
+    for (images) |img| if (img.@"error") |f| {
+        failed += 1;
+        if (first) |ff| {
+            if (!std.mem.eql(u8, ff.code, f.code)) same_code = false;
+        } else first = f;
     };
-    const exit = if (top) |t| exitFor(t.code) else clikit.exit.ok;
+    if (failed == 0) return null;
+    if (failed == images.len and same_code) return first.?;
+    return .{ .code = "partial_failure", .message = try std.fmt.allocPrint(a, "{d} of {d} images failed", .{ failed, images.len }) };
+}
 
+fn writeResult(ctx: Ctx, o: Options, plan: Plan, elapsed_ms: i64) !u8 {
+    const images = try imagesOut(ctx.arena, plan.jobs);
+    const top = try topFailure(ctx.arena, images);
     const data = .{
-        .provider = plan.provider.name,
-        .model = plan.model,
+        .provider = plan.call.provider.name,
+        .model = plan.call.model,
         .elapsed_ms = elapsed_ms,
         .transparent = plan.transparent,
         .warnings = plan.warnings.items,
@@ -702,21 +920,26 @@ fn writeResult(ctx: Ctx, o: Options, plan: Plan, elapsed_ms: i64) !u8 {
         },
         .text => {
             for (plan.warnings.items) |w| try ctx.stderr.print("warning: {s}\n", .{w});
-            for (images) |img| {
-                if (img.ok) {
-                    try ctx.stdout.print("{s}\n", .{img.path.?});
-                } else if (img.variant) |v| {
-                    try ctx.stderr.print("error: [{s}] {s}\n", .{ v, img.@"error".?.message });
-                } else {
-                    try ctx.stderr.print("error: {s}\n", .{img.@"error".?.message});
-                }
-            }
+            try writeImagesText(ctx, "", images);
         },
     }
-    return exit;
+    return if (top) |t| exitFor(t.code) else clikit.exit.ok;
 }
 
-fn exitFor(code: []const u8) u8 {
+/// Paths to stdout, errors to stderr.
+pub fn writeImagesText(ctx: Ctx, prefix: []const u8, images: []const ImageOut) !void {
+    for (images) |img| {
+        if (img.ok) {
+            try ctx.stdout.print("{s}\n", .{img.path.?});
+        } else if (img.variant) |v| {
+            try ctx.stderr.print("error: {s}[{s}] {s}\n", .{ prefix, v, img.@"error".?.message });
+        } else {
+            try ctx.stderr.print("error: {s}{s}\n", .{ prefix, img.@"error".?.message });
+        }
+    }
+}
+
+pub fn exitFor(code: []const u8) u8 {
     const eql = std.mem.eql;
     if (eql(u8, code, "auth")) return clikit.exit.needs_human;
     if (eql(u8, code, "cancelled")) return clikit.exit.cancelled;
@@ -724,43 +947,61 @@ fn exitFor(code: []const u8) u8 {
     return clikit.exit.failure;
 }
 
-fn writeDryRun(ctx: Ctx, o: Options, plan: Plan) !void {
-    const PlannedImage = struct { path: []const u8, variant: ?[]const u8, prompt: []const u8 };
-    const planned = try ctx.arena.alloc(PlannedImage, plan.jobs.len);
+const PlannedImage = struct { path: []const u8, variant: ?[]const u8, prompt: []const u8 };
+
+pub const DryRun = struct {
+    dry_run: bool = true,
+    provider: []const u8,
+    model: []const u8,
+    endpoint: []const u8,
+    transparent: ?[]const u8,
+    request: struct {
+        size: ?[]const u8,
+        aspect_ratio: ?[]const u8,
+        image_size: ?[]const u8,
+        quality: ?[]const u8,
+        background: ?[]const u8,
+        output_format: ?[]const u8,
+        compression: ?u8,
+        images: []const []const u8,
+        mask: ?[]const u8,
+    },
+    warnings: []const []const u8,
+    images: []const PlannedImage,
+};
+
+pub fn dryRunData(a: Allocator, plan: Plan) !DryRun {
+    const planned = try a.alloc(PlannedImage, plan.jobs.len);
     for (plan.jobs, planned) |job, *p| p.* = .{ .path = job.path, .variant = job.variant, .prompt = job.prompt };
-    const r = plan.request;
-    const data = .{
-        .dry_run = true,
-        .provider = plan.provider.name,
-        .model = plan.model,
-        .endpoint = plan.url,
+    const r = plan.call.request;
+    return .{
+        .provider = plan.call.provider.name,
+        .model = plan.call.model,
+        .endpoint = plan.call.url,
         .transparent = plan.transparent,
         .request = .{
             .size = r.size,
+            .aspect_ratio = r.aspect_ratio,
+            .image_size = r.image_size,
             .quality = r.quality,
             .background = r.background,
             .output_format = r.output_format,
             .compression = r.compression,
             .images = plan.image_paths,
-            .mask = o.mask,
+            .mask = plan.mask_path,
         },
         .warnings = plan.warnings.items,
         .images = planned,
     };
-    switch (o.format) {
-        .json => {
-            try std.json.Stringify.value(.{ .ok = true, .data = data }, json_options, ctx.stdout);
-            try ctx.stdout.writeByte('\n');
-        },
-        .text => {
-            try ctx.stdout.print("provider  {s}\nmodel     {s}\nendpoint  {s}\n", .{ data.provider, data.model, data.endpoint });
-            for (plan.warnings.items) |w| try ctx.stderr.print("warning: {s}\n", .{w});
-            for (planned) |p| {
-                try ctx.stdout.print("\n{s}\n", .{p.path});
-                var lines = std.mem.splitScalar(u8, p.prompt, '\n');
-                while (lines.next()) |line| try ctx.stdout.print("  {s}\n", .{line});
-            }
-        },
+}
+
+pub fn writeDryRunText(ctx: Ctx, plan: Plan) !void {
+    try ctx.stdout.print("provider  {s}\nmodel     {s}\nendpoint  {s}\n", .{ plan.call.provider.name, plan.call.model, plan.call.url });
+    for (plan.warnings.items) |w| try ctx.stderr.print("warning: {s}\n", .{w});
+    for (plan.jobs) |job| {
+        try ctx.stdout.print("\n{s}\n", .{job.path});
+        var lines = std.mem.splitScalar(u8, job.prompt, '\n');
+        while (lines.next()) |line| try ctx.stdout.print("  {s}\n", .{line});
     }
 }
 
@@ -812,13 +1053,40 @@ test "dry run forces png for transparent backgrounds" {
     try testing.expect(std.mem.indexOf(u8, out, "\"path\":\"/nonexistent-imgen/x.png\"") != null);
 }
 
-test "unimplemented provider is unsupported" {
+test "gemini dry run maps aspect ratio and falls back to chroma key" {
     var t: TestCtx = undefined;
     try t.init();
     defer t.deinit();
-    const code = try run(t.ctx(), &.{ "--prompt", "p", "--provider", "gemini", "--out", "x.png", "--format", "json" });
-    try testing.expectEqual(clikit.exit.usage, code);
-    try testing.expect(std.mem.indexOf(u8, t.out.written(), "\"code\":\"unsupported\"") != null);
+    try t.env.put("IMGEN_PROVIDER", "gemini");
+    const code = try run(t.ctx(), &.{ "--prompt", "a frog", "--aspect", "16:9", "--background", "transparent", "--chroma-key", "#ff00ff", "--out", "/nonexistent-imgen/frog.png", "--dry-run", "--format", "json" });
+    try testing.expectEqual(clikit.exit.ok, code);
+    const out = t.out.written();
+    try testing.expect(std.mem.indexOf(u8, out, "\"endpoint\":\"https://generativelanguage.googleapis.com/v1beta/models/gemini-nano-banana-2.1:generateContent\"") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "\"transparent\":\"chroma-key\"") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "\"aspect_ratio\":\"16:9\"") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "solid #FF00FF chroma-key") != null);
+}
+
+test "openai without native transparency uses chroma key and drops background" {
+    var t: TestCtx = undefined;
+    try t.init();
+    defer t.deinit();
+    const code = try run(t.ctx(), &.{ "--prompt", "p", "--model", "openai/gpt-image-2", "--background", "transparent", "--out", "/nonexistent-imgen/x.png", "--dry-run", "--format", "json" });
+    try testing.expectEqual(clikit.exit.ok, code);
+    const out = t.out.written();
+    try testing.expect(std.mem.indexOf(u8, out, "\"transparent\":\"chroma-key\"") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "\"background\"") == null);
+    try testing.expect(std.mem.indexOf(u8, out, "solid #00FF00") != null);
+}
+
+test "chroma key is ignored with native transparency" {
+    var t: TestCtx = undefined;
+    try t.init();
+    defer t.deinit();
+    try t.env.put("IMGEN_PROVIDER", "codex");
+    const code = try run(t.ctx(), &.{ "--prompt", "p", "--background", "transparent", "--chroma-key", "#ff00ff", "--out", "/nonexistent-imgen/x.png", "--dry-run", "--format", "json" });
+    try testing.expectEqual(clikit.exit.ok, code);
+    try testing.expect(std.mem.indexOf(u8, t.out.written(), "--chroma-key only applies") != null);
 }
 
 test "missing codex login needs a human" {

@@ -1,15 +1,52 @@
 name: ci
 
+# Docs-only changes skip CI. Otherwise `repo plan` decides what runs:
+# structure for any change, checks for affected tools, and cross-compile plus
+# native smoke tests only for tools whose version changed (Release PRs).
 on:
   pull_request:
+    paths: ["**", "!**.md", "**/SKILL.md", "!LICENSE"]
   push:
     branches: [main]
+    paths: ["**", "!**.md", "**/SKILL.md", "!LICENSE"]
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      check: ${{ steps.plan.outputs.check }}
+      check_all: ${{ steps.plan.outputs.check_all }}
+      build: ${{ steps.plan.outputs.build }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - id: plan
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          git rev-parse -q --verify "$BASE^{commit}" >/dev/null || BASE=$(git rev-list --max-parents=0 HEAD)
+          plan=$(go run ./cmd/repo plan --base "$BASE")
+          echo "$plan"
+          for k in structure check check_all build; do
+            echo "$k=$(jq -c ".$k" <<<"$plan")" >> "$GITHUB_OUTPUT"
+          done
+      - if: steps.plan.outputs.structure == 'true'
+        run: go run ./cmd/repo structure
+
   check:
+    needs: plan
+    if: needs.plan.outputs.check != '[]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -21,9 +58,33 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ steps.zig.outputs.version }}
-      - run: make check
-      - name: Cross-compile every tool
-        run: make build ALL=1
+      - env:
+          CHECK: ${{ needs.plan.outputs.check }}
+          CHECK_ALL: ${{ needs.plan.outputs.check_all }}
+        run: |
+          if [ "$CHECK_ALL" = true ]; then
+            go run ./cmd/repo check
+          else
+            for t in $(jq -r '.[]' <<<"$CHECK"); do go run ./cmd/repo check --tool "$t"; done
+          fi
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.build != '[]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - id: zig
+        run: echo "version=$(cat .zig-version)" >> "$GITHUB_OUTPUT"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ steps.zig.outputs.version }}
+      - env:
+          BUILD: ${{ needs.plan.outputs.build }}
+        run: for t in $(jq -r '.[]' <<<"$BUILD"); do go run ./cmd/repo build --tool "$t" --all-platforms; done
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -32,7 +93,7 @@ jobs:
 
   # Run the cross-compiled binaries on native runners.
   smoke:
-    needs: check
+    needs: build
     strategy:
       fail-fast: false
       matrix:

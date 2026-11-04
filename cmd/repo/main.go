@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ Commands:
   build [--tool T] [--platform P | --all-platforms] [--tag T]
                                  Cross-compile into dist/<tool>/ with checksums.txt
   smoke                          Verify host binaries already in dist/
+  plan --base REV                Print the CI jobs needed for changes since REV, as JSON
   new <name> --lang go|zig|none [--no-skill]
                                  Scaffold tools/<name> and/or skills/<name>
 `
@@ -53,6 +55,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	tag := fs.String("tag", "", "release tag; must equal <tool>-v<tool.yaml version>")
 	lang := fs.String("lang", "", "go, zig or none")
 	noSkill := fs.Bool("no-skill", false, "do not create a paired skill")
+	base := fs.String("base", "", "git revision to diff against")
 
 	var positional []string
 	if cmd == "new" && len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
@@ -93,6 +96,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return build(r, root, *tool, *platform, *all, *tag, stderr)
 	case "smoke":
 		return r.Smoke(stdout)
+	case "plan":
+		if *base == "" {
+			return fmt.Errorf("usage: plan --base REV")
+		}
+		p, err := r.PlanSince(*base)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(stdout).Encode(p)
 	case "new":
 		if len(positional) == 0 {
 			return fmt.Errorf("usage: new <name> --lang go|zig|none [--no-skill]")

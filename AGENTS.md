@@ -56,6 +56,7 @@ go run ./cmd/repo new foo --lang go|zig|none [--no-skill]   # 新建工具或 sk
 - **发布链路**：合并 Release PR 后自动打 tag、建 Release，然后 `publish` workflow 编译全部平台，生成 `checksums.txt` 和构建来源证明，上传到 Release。
   - tag 格式：CLI 是 `<tool>-vX.Y.Z`，skill 是 `<skill>-skill-vX.Y.Z`
   - 上传失败时，在 Actions 里手动运行 `publish` 并传入同一个 tag 重跑
+- **CI 按改动决定跑什么**：只改 `.md`（SKILL.md 除外）不跑 CI；改了别的跑结构检查；改到工具目录、公共包或仓库工具时检查受影响的工具；只有版本号变了的工具（即 Release PR）才交叉编译并上真机 smoke。`go run ./cmd/repo plan --base main` 可以本地预览。
 - **skill 依赖新版 CLI 时**，把 `metadata.requires` 改成新版本号，先合并 CLI 的 Release PR，再合并 skill 的。
 - 打 tag、推送、合并 Release PR、手动触发 publish，都只在用户明确要求时执行。
 

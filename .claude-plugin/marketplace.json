@@ -5,16 +5,6 @@
   },
   "plugins": [
     {
-      "name": "hello-go",
-      "description": "用 hello-go CLI 生成问候语。",
-      "version": "0.0.0",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./skills/hello-go"
-      ]
-    },
-    {
       "name": "imgen",
       "description": "用 imgen CLI 生成和编辑位图：照片、插画、海报、产品图、UI mockup、logo、icon、sprite、贴纸、纹理，透明背景素材，抠图（去绿幕、去纯色背景），缩小图片。",
       "version": "0.0.0",

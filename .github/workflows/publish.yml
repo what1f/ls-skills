@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "CLI release tag, e.g. hello-go-v0.1.0"
+        description: "CLI release tag, e.g. imgen-v0.1.0"
         type: string
         required: true
 

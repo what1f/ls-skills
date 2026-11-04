@@ -6,6 +6,20 @@
   "separate-pull-requests": true,
   "include-component-in-tag": true,
   "packages": {
+    "skills/agent-dispatch": {
+      "component": "agent-dispatch-skill",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "SKILL.md"
+        },
+        {
+          "type": "json",
+          "path": "/.claude-plugin/marketplace.json",
+          "jsonpath": "$.plugins[?(@.name=='agent-dispatch')].version"
+        }
+      ]
+    },
     "skills/imgen": {
       "component": "imgen-skill",
       "extra-files": [

@@ -10,6 +10,7 @@
 
 | Skill | 作用 | 安装 |
 | --- | --- | --- |
+| [agent-dispatch](skills/agent-dispatch/SKILL.md) | 在 rex 或 herdr 里启动 Claude Code、Codex、Pi，派任务、等结果、追问；没有这两个工具时改用非交互模式 | `npx skills add what1f/ls-skills --skill agent-dispatch` |
 | [imgen](skills/imgen/SKILL.md) | 用 OpenAI、Gemini 或 Codex 登录生成和编辑图片（照片、插画、图标、UI mockup、sprite），支持透明背景、抠图和缩放 | `npx skills add what1f/ls-skills --skill imgen` |
 
 ## 安装 skill

@@ -10,6 +10,7 @@ Skills for AI agents, plus the command-line tools behind them (Go / Zig). All op
 
 | Skill | What it does | Install |
 | --- | --- | --- |
+| [agent-dispatch](skills/agent-dispatch/SKILL.md) | Launch Claude Code, Codex or Pi in rex or herdr, hand them tasks, wait for results and follow up; falls back to non-interactive mode | `npx skills add what1f/ls-skills --skill agent-dispatch` |
 | [imgen](skills/imgen/SKILL.md) | Generate and edit images (photos, illustrations, icons, UI mockups, sprites) with OpenAI, Gemini or a Codex login; transparent backgrounds, cutouts and resizing | `npx skills add what1f/ls-skills --skill imgen` |
 
 ## Install a skill

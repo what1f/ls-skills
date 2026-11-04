@@ -7,7 +7,7 @@
     {
       "name": "imgen",
       "description": "用 imgen CLI 生成和编辑位图：照片、插画、海报、产品图、UI mockup、logo、icon、sprite、贴纸、纹理，透明背景素材，抠图（去绿幕、去纯色背景），缩小图片。",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "source": "./",
       "strict": false,
       "skills": [

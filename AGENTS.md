@@ -6,7 +6,7 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `tools/<name>/` | 一个 CLI：`tool.yaml`（元数据与版本）、`cli/`（源码）、`CHANGELOG.md`、`README.md`（给人看的说明），可选 `AGENTS.md`（只写该工具的额外要求） |
+| `tools/<name>/` | 一个 CLI：`tool.yaml`（元数据与版本）、`cli/`（源码）、`CHANGELOG.md`、`README.md`（给人看的英文说明，可加 `README.zh-CN.md` 中文版，两者顶部互相链接），可选 `AGENTS.md`（只写该工具的额外要求） |
 | `skills/<name>/` | 一个 skill：`SKILL.md`、`CHANGELOG.md`，可选 `references/`、`scripts/`、`assets/` |
 | `packages/go/clikit`、`packages/zig/clikit` | CLI 合同的公共实现：version、`--format`、输出格式、退出码 |
 | `cmd/repo`、`internal/repo` | 仓库工具：结构检查、同步、交叉编译、脚手架；新建工具的模板在 `internal/repo/templates/` |
@@ -14,7 +14,6 @@
 | `release-please-config.json`、`.release-please-manifest.json`、`.claude-plugin/marketplace.json` | 生成文件：用 `make sync` 维护，手改会被检查拦下 |
 
 - `tools/<name>` 和 `skills/<name>` 同名配对，配对关系写在 `tool.yaml` 的 `skill:` 字段；没有 skill 的工具写 `skill: null`，也可以只有 skill 没有 CLI。
-- `hello-go` 是用来跑通流水线的 Go 示例，有了 Go 的真实工具后删除。
 
 ## 命令
 

@@ -1,5 +1,9 @@
 # imgen
 
+<p align="center">
+  <a href="./README.zh-CN.md">简体中文</a>
+</p>
+
 Generate and edit images from the command line. Variants, repeated samples and batch jobs run as parallel requests; every result is written to a file and reported as JSON with `--format json`. Transparent backgrounds work on every model: when a model has no native transparency, imgen asks for a flat chroma-key background and removes it locally.
 
 ## Install

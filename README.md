@@ -1,49 +1,58 @@
 # ls-skills
 
-一组给 AI Agent 用的 skill，以及它们背后的命令行工具（Go / Zig），全部开源。
+<p align="center">
+  <a href="./README.zh-CN.md">简体中文</a>
+</p>
 
-## 安装 skill
+Skills for AI agents, plus the command-line tools behind them (Go / Zig). All open source.
 
-任意支持 skill 的 Agent（Claude Code、Codex、Cursor 等）：
+## Skills
+
+| Skill | What it does | Install |
+| --- | --- | --- |
+| [imgen](skills/imgen/SKILL.md) | Generate and edit images (photos, illustrations, icons, UI mockups, sprites) with OpenAI, Gemini or a Codex login; transparent backgrounds, cutouts and resizing | `npx skills add what1f/ls-skills --skill imgen` |
+
+## Install a skill
+
+Any agent that supports skills (Claude Code, Codex, Cursor and others):
 
 ```sh
-npx skills add what1f/ls-skills                    # 选择要装的 skill
-npx skills add what1f/ls-skills --skill hello-go   # 只装一个
+npx skills add what1f/ls-skills                    # pick the skills to install
+npx skills add what1f/ls-skills --skill imgen      # install one
 ```
 
-Claude Code 插件市场（可随版本更新）：
+Claude Code plugin marketplace (updates with each release):
 
 ```
 /plugin marketplace add what1f/ls-skills
-/plugin install hello-go@ls-skills
+/plugin install imgen@ls-skills
 ```
 
-Agent 首次使用 skill 时会按说明自动安装所需的 CLI。
+The first time an agent uses a skill, it installs the CLI the skill needs.
 
-## 安装 CLI
+## Install a CLI
 
-macOS / Linux：
+macOS / Linux:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/what1f/ls-skills/main/install.sh | sh -s -- <tool> [version]
 ```
 
-Windows PowerShell：
+Windows PowerShell:
 
 ```powershell
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/what1f/ls-skills/main/install.ps1))) <tool> [version]
 ```
 
-默认装到 `~/.local/bin`（Windows 为 `%LOCALAPPDATA%\ls-skills\bin`），可用 `LS_INSTALL_DIR` 修改。安装器会校验 SHA-256；每个 Release 还附带 GitHub 构建来源证明，可用 `gh attestation verify <file> --repo what1f/ls-skills` 验证。
+Installs to `~/.local/bin` (`%LOCALAPPDATA%\ls-skills\bin` on Windows); set `LS_INSTALL_DIR` to change it. The installer checks SHA-256, and every release carries GitHub build provenance you can verify with `gh attestation verify <file> --repo what1f/ls-skills`.
 
-| 工具 | 说明 |
+| Tool | What it does |
 | --- | --- |
-| [hello-go](tools/hello-go) | Go 示例 |
-| [imgen](tools/imgen) | 命令行生成和编辑图片 |
+| [imgen](tools/imgen) | Generate and edit images with OpenAI, Gemini or a Codex login; local cutout and resize |
 
-## 参与开发
+## Contributing
 
-需要 Go（版本见 `go.mod`）和 Zig（版本见 `.zig-version`）。
+You need Go (version in `go.mod`) and Zig (version in `.zig-version`).
 
 ```sh
 make help
@@ -51,13 +60,13 @@ make check
 go run ./cmd/repo new <name> --lang go|zig|none
 ```
 
-目录约定、CLI 合同、skill 写法和发版规则见 [AGENTS.md](AGENTS.md)。PR 标题需符合 [Conventional Commits](https://www.conventionalcommits.org/)，它决定各个工具和 skill 的版本号。
+Layout, the CLI contract, how to write skills and how releases work are in [AGENTS.md](AGENTS.md). PR titles follow [Conventional Commits](https://www.conventionalcommits.org/); they decide the version of each tool and skill.
 
-### 维护者一次性设置
+### One-time maintainer setup
 
-- Settings → General → Pull Requests：只开启 squash merge，默认使用 PR 标题作为 commit 信息。
-- Settings → Actions → General：允许 GitHub Actions 创建和批准 pull request。
-- 可选：添加 `RELEASE_PLEASE_TOKEN` secret（有 contents、pull-requests 写权限的 fine-grained PAT 或 GitHub App token），这样 Release PR 也会触发 CI。
+- Settings → General → Pull Requests: allow squash merge only, and use the PR title as the commit message by default.
+- Settings → Actions → General: allow GitHub Actions to create and approve pull requests.
+- Add a `RELEASE_PLEASE_TOKEN` secret: a fine-grained PAT scoped to this repo with Contents and Pull requests write access, or a GitHub App token. Without it Release PRs are opened by `github-actions[bot]` and their CI waits for manual approval.
 
 ## License
 

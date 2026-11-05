@@ -37,7 +37,7 @@ pub const usage =
     \\Model:
     \\  --provider NAME          Built-in (openai, gemini, codex) or from the config
     \\                           file; see 'imgen providers'
-    \\  --model [PROVIDER/]NAME  e.g. codex/gpt-image-2.5-flare. Default: IMGEN_MODEL,
+    \\  --model [PROVIDER/]NAME  e.g. openai/gpt-image-2. Default: IMGEN_MODEL,
     \\                           then "default" in the config file
     \\  --aspect W:H             Aspect ratio, e.g. 16:9
     \\  --size WxH               Exact size, when the model supports it

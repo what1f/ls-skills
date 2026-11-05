@@ -150,7 +150,7 @@ fn despillPixel(rgb: *[3]u8, s: Spill) void {
 }
 
 /// Per-channel median of a 6-pixel band around the edge.
-fn sampleBorder(img: Image) Rgb {
+pub fn sampleBorder(img: Image) Rgb {
     const w = img.width;
     const h = img.height;
     const band = @max(1, @min(w, h, 6));

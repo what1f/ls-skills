@@ -9,6 +9,8 @@ const providers = @import("cmd/providers.zig");
 const batch = @import("cmd/batch.zig");
 const cutout = @import("cmd/cutout.zig");
 const resize = @import("cmd/resize.zig");
+const animate = @import("cmd/animate.zig");
+const sheet = @import("cmd/sheet.zig");
 
 const name = "imgen";
 
@@ -30,6 +32,8 @@ const usage =
     \\  batch       Run many generate jobs from a JSONL file
     \\  cutout      Turn a flat background color into transparency (local)
     \\  resize      Shrink a PNG (local)
+    \\  animate     Turn a sprite sheet into a GIF (local)
+    \\  sheet       Lay out GIF frames as a sprite sheet (local)
     \\  providers   List providers, credentials and model capabilities
     \\  version     Print version information
     \\
@@ -85,6 +89,8 @@ fn run(ctx: Ctx, args: []const [:0]const u8) !u8 {
     if (eql(cmd, "batch")) return batch.run(ctx, rest);
     if (eql(cmd, "cutout")) return cutout.run(ctx, rest);
     if (eql(cmd, "resize")) return resize.run(ctx, rest);
+    if (eql(cmd, "animate")) return animate.run(ctx, rest);
+    if (eql(cmd, "sheet")) return sheet.run(ctx, rest);
     if (eql(cmd, "providers")) return providers.run(ctx, rest);
     try stderr.print("unknown command \"{s}\"\n\n{s}", .{ cmd, usage });
     return clikit.exit.usage;
@@ -137,6 +143,8 @@ test {
     _ = batch;
     _ = cutout;
     _ = resize;
+    _ = animate;
+    _ = sheet;
     _ = @import("output.zig");
     _ = @import("provider.zig");
     _ = @import("provider/openai.zig");

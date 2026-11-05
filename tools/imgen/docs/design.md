@@ -6,7 +6,7 @@
 
 - 一个命令覆盖生成和编辑：输入图片是可选的。到底是「编辑」还是「参考」，由 prompt 的写法决定，skill 负责教 Agent 怎么写。
 - 每次请求 provider 都只要一张图。多张图（变体、重复采样、批量）一律由 CLI 并发发起多次请求实现，三家 provider 的行为因此保持一致。
-- 只支持 PNG 的本地图像处理（抠图、缩放）。模型输出可以强制为 PNG；JPEG 和 WebP 的解码成本高，不做。
+- 只支持 PNG 的本地图像处理（抠图、缩放、sprite sheet 拼 GIF）。GIF 只在 `animate` 和 `sheet` 里读写，不进 generate 的 `--output-format`。模型输出可以强制为 PNG；JPEG 和 WebP 的解码成本高，不做。
 - 不在 CLI 里拼装 prompt：结构化模板写在 skill 里，由 Agent 拼好后传入。唯一的例外是透明背景的绿幕后缀，见下文。
 
 ## 命令
@@ -101,6 +101,38 @@
 
 出参：`{"path","width","height","bytes"}`。缩放用面积平均（box filter），缩小时效果好，实现也简单。
 
+### `imgen animate`
+
+把一张 sprite sheet 拼成 GIF。生成动图的官方做法就是让模型画一张网格 sprite sheet，再在本地拼装；Codex 登录下原生 GIF 输出被服务端关掉了（见「已核实」）。
+
+| 参数 | 说明 |
+| --- | --- |
+| `--image PATH --grid CxR --out PATH.gif` | 必填；格子按从左到右、从上到下读 |
+| `--frames N` | 只取前 N 格，默认全部 |
+| `--frame-ms N` | 每帧时长，20–60000，默认 200；GIF 以 10 ms 为单位存储 |
+| `--loop N` | 0 为无限循环 |
+| `--max-dim N` | 每帧缩到长边 N |
+| `--inset N` | 每格四边各裁掉 N px，去掉网格线或串格 |
+| `--align none\|bottom\|center` | 对齐主体：bottom 取主体最低行和底部 15% 的水平重心，center 取整体重心；每帧平移到所有帧的中位数位置 |
+| `--transparent`、`--key auto\|#RRGGBB` | 先对整张 sheet 按 `cutout` 默认参数抠图；alpha < 128 的像素成为透明色，其余不透明 |
+
+- sheet 宽高不能被网格整除时，第 i 格从 `i*W/cols` 开始，所有帧裁成最小格的尺寸，并给出 warning。
+- 某一格找不到主体（与背景色差都小于阈值）时给出 warning，通常是 `--grid` 或 `--frames` 写错了。
+- 所有帧共用一个全局调色板：在 15 位色直方图上做 median cut，最多 256 色（透明时 255 色加 1 个透明色），不抖动。透明时 disposal 为 2（每帧先清空），否则为 1。
+
+出参：`{"path","frames","grid","frame_width","frame_height","frame_ms","duration_ms","colors","transparent","key_color","bytes","warnings"}`。
+
+### `imgen sheet`
+
+`animate` 的反向：把 GIF 的每一帧按浏览器的显示效果合成（disposal、局部调色板、透明色、隔行扫描），排成一张 PNG。用来把现有动图当作参考图交给 generate 重画。
+
+| 参数 | 说明 |
+| --- | --- |
+| `--image PATH.gif --out PATH.png` | 必填 |
+| `--cols N` | 默认取 `ceil(sqrt(帧数))` |
+
+出参：`{"path","frames","grid","frame_width","frame_height","width","height","delays_ms","bytes"}`。
+
 ### `imgen providers`
 
 出参：
@@ -153,7 +185,7 @@ provider 确定后，模型取第一个「没写 provider 或写的正是这个 
 | 鉴权 | `Authorization: Bearer $OPENAI_API_KEY` | 每次调用都重新读取 `auth.json` 的 `tokens.access_token`，不负责刷新（刷新由 Codex 管理） | `x-goog-api-key` |
 | 地址 | `{base}/images/generations`，带输入图时走 `{base}/images/edits` | `https://chatgpt.com/backend-api/codex`，路径和 openai 相同 | `{base}/v1beta/models/{model}:generateContent` |
 | 编辑请求格式 | multipart（一张图用 `image`，多张用 `image[]`，加 `mask`）；配置 `edit_format` 可改 | JSON：`images:[{image_url:<data URL>}]`、`mask:{image_url}`（该后端不接受 multipart） | `contents[0].parts`：先放文字，再按顺序放 `inlineData{mimeType,data}` |
-| 画幅 | 映射成 `size`（规则见下文） | 后端忽略 `size`，在 prompt 末尾追加 `Aspect ratio W:H.`；传 `--size` 时给出 warning | `generationConfig.imageConfig.aspectRatio` 取最接近的受支持比例；传 `--size` 时再按长边选最小够用的 `imageSize` 档位（`1K`/`2K`/`4K`，2.5 不传）；对不上时给出 warning |
+| 画幅 | 映射成 `size`（规则见下文） | 后端忽略 `size`，在 prompt 末尾追加 `Aspect ratio W:H.`；传 `--size` 时给出 warning。模型和 `quality` 也由服务端决定，内置模型名只有 `auto`，传 `--quality` 时给出 warning | `generationConfig.imageConfig.aspectRatio` 取最接近的受支持比例；传 `--size` 时再按长边选最小够用的 `imageSize` 档位（`1K`/`2K`/`4K`，2.5 不传）；对不上时给出 warning |
 | mask | 支持 | 支持 | 不支持 |
 | 原生透明背景 | 取决于模型（gpt-image-1.5 支持，gpt-image-2 不支持） | 支持 | 不支持 |
 | 输出格式 | `output_format` | 忽略 `output_format`，总是 PNG | 总是 PNG |
@@ -207,6 +239,7 @@ openai、codex 和配置里的 OpenAI 兼容服务共用一套协议代码，区
 - **读取图片宽高**：只读文件头，支持 PNG（IHDR）、JPEG（SOF 段）、WebP（VP8、VP8L、VP8X），这样 generate 的输出不需要完整解码。
 - **抠图**：移植 `remove_chroma_key.py` 的这些步骤：边缘采样取背景色、颜色距离、平滑过渡的软边、按颜色主导程度计算 alpha、去溢色、用 3×3 最小值滤波收边、用高斯模糊羽化 alpha。
 - **缩放**：面积平均。
+- **GIF**：编码用全局调色板（median cut）和变长 LZW（开放寻址哈希表，码表满 4095 时发 clear）；解码支持 GIF87a/89a、局部调色板、透明色、disposal 0–3、隔行扫描，帧数乘画布像素超过 2^26 时报错。
 
 ## 代码结构（`tools/imgen/cli/src/`）
 
@@ -214,11 +247,11 @@ openai、codex 和配置里的 OpenAI 兼容服务共用一套协议代码，区
 main.zig            命令分发
 cmd/generate.zig    generate 和 batch 共用的执行器：展开 variant × n、并发、重试、写文件
 cmd/batch.zig       解析 JSONL、合并默认值；所有行先规划，任何一行有错就在发请求前整体报错（`line N: …`），多行写同一路径也算错
-cmd/cutout.zig  cmd/resize.zig  cmd/providers.zig
+cmd/cutout.zig  cmd/resize.zig  cmd/animate.zig  cmd/sheet.zig  cmd/providers.zig
 provider.zig        provider 注册表：内置 provider、读取 config.json、选择 provider 和模型、取凭证
 provider/openai.zig provider/codex.zig provider/gemini.zig   （codex 是 openai 协议的一套配置，codex.zig 只读登录 token）
 http.zig            HTTP 客户端（代理、超时、错误映射）、multipart 拼装
-image/png.zig  image/sniff.zig  image/chroma.zig  image/resize.zig
+image/png.zig  image/sniff.zig  image/chroma.zig  image/resize.zig  image/gif.zig
 output.zig          计算输出路径、检查文件是否已存在、改正扩展名
 ```
 
@@ -252,7 +285,7 @@ output.zig          计算输出路径、检查文件是否已存在、改正扩
 
 ## 已核实（2026-11）
 
-- Codex 后端：模型名不校验（未知模型也能出图），`size` 和 `output_format` 被忽略，总是返回 PNG；画幅写进 prompt 有效（16:9 得到 1672×941）；`background: transparent` 返回 RGBA；JSON 形式的 edits 和 mask 都生效。错误体有 `{"detail":…}` 和 `{"error":{…}}` 两种。
+- Codex 后端：模型由服务端决定（2026-11 起为 Images 2.6），请求里的 `model` 不校验也不生效，`quality`、`size`、`output_format` 被忽略，总是返回 PNG；`output_format: gif` 返回 400 "GIF output is not enabled for this request."，`svg` 被忽略；画幅写进 prompt 有效（16:9 得到 1672×941）；`background: transparent` 返回 RGBA；JSON 形式的 edits 和 mask 都生效。错误体有 `{"detail":…}` 和 `{"error":{…}}` 两种。
 - Zig 0.17：`fetch` 的 `privileged_headers` 不会被发送，鉴权头要用 `headers.authorization`；stdout/stderr 要用 `File.Writer.initStreaming`，默认的 positional 模式在多个进程共用一个重定向文件时会互相覆盖；几 MB 的响应体用 `Writer.Allocating` 整体读入即可。
 - Gemini（[图像生成文档](https://ai.google.dev/gemini-api/docs/image-generation)、[generateContent 参考](https://ai.google.dev/api/generate-content)）：
   - 模型：`gemini-nano-banana-2.1`（最新，作为默认）、`gemini-3.1-flash-image`、`gemini-3.1-flash-lite-image`、`gemini-3-pro-image`、`gemini-2.5-flash-image`（旧版，最多 3 张输入图）。

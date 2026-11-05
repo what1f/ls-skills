@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/what1f/ls-skills/main/install.sh | 
 
 | Provider | Credential | Status |
 | --- | --- | --- |
-| `codex` | Codex ChatGPT login (`codex login`), read from `$CODEX_HOME/auth.json` (default `~/.codex`) | Available. Uses a non-public endpoint, so treat it as experimental |
+| `codex` | Codex ChatGPT login (`codex login`), read from `$CODEX_HOME/auth.json` (default `~/.codex`) | Available. Uses a non-public endpoint, so treat it as experimental. The server picks the model (Images 2.6 as of 2026-11) and quality; `--model`, `--quality` and `--size` are ignored, so set the aspect ratio in the prompt or with `--aspect` |
 | `openai` | `OPENAI_API_KEY`, optional `OPENAI_BASE_URL` | Available |
 | `gemini` | `GEMINI_API_KEY` or `GOOGLE_API_KEY`, optional `GEMINI_BASE_URL` | Available. Default model `gemini-nano-banana-2.1`. Built from the API reference; not yet tested against the live service |
 
@@ -28,7 +28,7 @@ Add OpenAI- or Gemini-compatible providers, change built-in ones, or set the def
 
 ```json
 {
-  "default": "codex/gpt-image-2.5-flare",
+  "default": "codex",
   "providers": {
     "relay": {
       "base_url": "https://relay.example.com/v1",
@@ -67,8 +67,13 @@ imgen batch --input jobs.jsonl --out-dir out  # one JSON object per line, e.g. {
 
 imgen cutout --image green.png --out cut.png  # remove a flat background color, locally
 imgen resize --image big.png --out small.png --max-dim 512
+
+imgen animate --image sheet.png --grid 3x2 --out walk.gif --frame-ms 120   # sprite sheet to GIF, locally
+imgen sheet --image walk.gif --out sheet.png                                # GIF frames back to a sprite sheet
 ```
 
-`batch` retries rate limits, timeouts and 5xx errors with backoff (`--max-attempts`, default 3) and honours `Retry-After`. `cutout` and `resize` read and write PNG only.
+`batch` retries rate limits, timeouts and 5xx errors with backoff (`--max-attempts`, default 3) and honours `Retry-After`. `cutout`, `resize` and `animate` read PNG only.
+
+For an animated GIF, generate one sprite sheet (all frames in a grid, same character and camera in every cell), then assemble it with `animate`. `--transparent` removes a flat background, and `--align bottom` keeps the subject on one baseline when the model draws it slightly off between cells.
 
 Run `imgen <command> --help` for all flags. The design notes are in [docs/design.md](docs/design.md).

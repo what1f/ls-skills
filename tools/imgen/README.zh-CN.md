@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/what1f/ls-skills/main/install.sh | 
 
 | Provider | 凭证 | 状态 |
 | --- | --- | --- |
-| `codex` | Codex 的 ChatGPT 登录（`codex login`），从 `$CODEX_HOME/auth.json` 读取（默认 `~/.codex`） | 可用。走的是非公开接口，视为实验性 |
+| `codex` | Codex 的 ChatGPT 登录（`codex login`），从 `$CODEX_HOME/auth.json` 读取（默认 `~/.codex`） | 可用。走的是非公开接口，视为实验性。模型和画质由服务端决定（2026-11 时为 Images 2.6），`--model`、`--quality`、`--size` 都会被忽略，画幅写进 prompt 或用 `--aspect` |
 | `openai` | `OPENAI_API_KEY`，可选 `OPENAI_BASE_URL` | 可用 |
 | `gemini` | `GEMINI_API_KEY` 或 `GOOGLE_API_KEY`，可选 `GEMINI_BASE_URL` | 可用。默认模型 `gemini-nano-banana-2.1`。按 API 文档实现，还没有对真实服务测试过 |
 
@@ -28,7 +28,7 @@ imgen 只读取 Codex 的 token，不会刷新或改写它，这些由 Codex 自
 
 ```json
 {
-  "default": "codex/gpt-image-2.5-flare",
+  "default": "codex",
   "providers": {
     "relay": {
       "base_url": "https://relay.example.com/v1",
@@ -67,8 +67,13 @@ imgen batch --input jobs.jsonl --out-dir out  # 每行一个 JSON 对象，如 {
 
 imgen cutout --image green.png --out cut.png  # 在本地去掉纯色背景
 imgen resize --image big.png --out small.png --max-dim 512
+
+imgen animate --image sheet.png --grid 3x2 --out walk.gif --frame-ms 120   # 在本地把 sprite sheet 拼成 GIF
+imgen sheet --image walk.gif --out sheet.png                                # 把 GIF 的帧排回 sprite sheet
 ```
 
-`batch` 遇到限流、超时和 5xx 错误会按退避重试（`--max-attempts`，默认 3 次），并遵守 `Retry-After`。`cutout` 和 `resize` 只读写 PNG。
+`batch` 遇到限流、超时和 5xx 错误会按退避重试（`--max-attempts`，默认 3 次），并遵守 `Retry-After`。`cutout`、`resize`、`animate` 只读 PNG。
+
+要做 GIF 动图时，先生成一张 sprite sheet（所有帧排成网格，每格的角色和机位一致），再用 `animate` 拼起来。`--transparent` 去掉纯色背景；模型画的各格位置略有偏差时，`--align bottom` 让主体保持在同一条底线上。
 
 `imgen <command> --help` 查看全部参数。设计说明见 [docs/design.md](docs/design.md)。

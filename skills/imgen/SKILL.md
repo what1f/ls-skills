@@ -1,14 +1,14 @@
 ---
 name: imgen
-description: 用 imgen CLI 生成和编辑位图：照片、插画、海报、产品图、UI mockup、logo、icon、sprite、贴纸、纹理，透明背景素材，抠图（去绿幕、去纯色背景），缩小图片。支持 OpenAI gpt-image、Gemini（Nano Banana）和 Codex 登录。当用户说「生成图片」「画一张」「出图」「做个图标」「改图」「P 图」「换背景」「抠图」「透明背景」「generate an image」「make a picture」「edit this photo」「remove background」时使用。要的是 SVG、HTML/CSS 或延续项目里现有的矢量图标时不用。
+description: 用 imgen CLI 生成和编辑位图：照片、插画、海报、产品图、UI mockup、logo、icon、sprite、贴纸、纹理，透明背景素材，GIF 动图（先生成 sprite sheet 再在本地拼成 GIF），抠图（去绿幕、去纯色背景），缩小图片。支持 OpenAI gpt-image、Gemini（Nano Banana）和 Codex 登录。当用户说「生成图片」「画一张」「出图」「做个图标」「改图」「P 图」「换背景」「抠图」「透明背景」「动图」「GIF」「sprite sheet」「帧动画」「generate an image」「make a picture」「edit this photo」「remove background」时使用。要的是 SVG、HTML/CSS 或延续项目里现有的矢量图标时不用。
 metadata:
   version: "0.1.0" # x-release-please-version
-  requires: "imgen>=0.1.0"
+  requires: "imgen>=0.2.0"
 ---
 
 # imgen
 
-用 AI 模型生成或编辑图片并写成文件，也能在本地抠掉纯色背景、缩小 PNG。
+用 AI 模型生成或编辑图片并写成文件，也能在本地抠掉纯色背景、缩小 PNG、把 sprite sheet 拼成 GIF。
 
 ## 环境准备
 
@@ -49,6 +49,9 @@ imgen batch --input jobs.jsonl --out-dir out --format json
 imgen cutout --image green.png --out cut.png --format json
 # 本地缩小
 imgen resize --image big.png --out small.png --max-dim 512 --format json
+# 本地把 sprite sheet 拼成 GIF；反过来把 GIF 的帧排成一张图
+imgen animate --image sheet.png --grid 3x2 --out anim.gif --format json
+imgen sheet --image anim.gif --out frames.png --format json
 ```
 
 核心参数：
@@ -84,6 +87,10 @@ variant 和 batch 的区别：同一个素材要几个候选，用 `--variant` �
 - 任何一行有问题，整个 batch 在发请求前就报错，`message` 以 `line N:` 开头
 - 可重试的错误（限流、超时、5xx）默认最多试 3 次（`--max-attempts`）；加 `--fail-fast` 后，第一个失败出现时不再启动新任务
 
+## GIF 动图
+
+模型一次画出一张 sprite sheet，`imgen animate` 在本地切格拼成 GIF。做动图、帧动画、sprite sheet，或照着现有 GIF 重画时，先读 [references/animation.md](references/animation.md)，里面有 sheet 的 prompt 模板、帧数和网格怎么选、对齐和透明参数，以及检查步骤。
+
 ## 透明背景
 
 `--background transparent` 时，`data.transparent` 说明用了哪种方式：
@@ -96,7 +103,7 @@ variant 和 batch 的区别：同一个素材要几个候选，用 `--variant` �
 1. 换 `--chroma-key` 颜色，或调整 prompt 让主体轮廓更干净，然后重新生成；或者
 2. 改用 `--background opaque`，在 prompt 里自己写「perfectly flat solid #00FF00 background」，再用 `imgen cutout` 调参数：`--key '#RRGGBB'` 指定背景色，`--contract 1` 收掉色边，`--feather 1` 让边缘柔和，`--hard --tolerance N` 处理边缘锐利的像素画
 
-`cutout` 和 `resize` 只接受 PNG。输入是 JPEG 时先转换，macOS 上用 `sips -s format png in.jpg --out in.png`。
+`cutout`、`resize`、`animate` 只接受 PNG。输入是 JPEG 时先转换，macOS 上用 `sips -s format png in.jpg --out in.png`。
 
 ## 规则
 

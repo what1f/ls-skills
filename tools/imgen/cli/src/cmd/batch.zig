@@ -382,7 +382,7 @@ test "batch dry run merges defaults and line fields" {
     try testing.expect(std.mem.indexOf(u8, out, "\"path\":\"/nonexistent-imgen/out/001-a-fox.png\"") != null);
     try testing.expect(std.mem.indexOf(u8, out, "Aspect ratio 16:9.") != null);
     try testing.expect(std.mem.indexOf(u8, out, "\"path\":\"/nonexistent-imgen/out/owl-2.png\",\"variant\":\"night\"") != null);
-    try testing.expect(std.mem.indexOf(u8, out, "\"quality\":\"low\"") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "codex ignores --quality") != null);
 }
 
 test "batch rejects bad lines before sending" {

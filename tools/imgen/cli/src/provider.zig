@@ -76,9 +76,10 @@ fn protocolCaps(protocol: Protocol) Capabilities {
 // gpt-image-1.x: three fixed sizes, native transparency.
 const gpt_image_1_caps: Capabilities = .{ .edit = true, .mask = true, .native_transparent = true, .sizes = .fixed, .output_format = true, .quality = true, .max_images = 16 };
 
-// The Codex backend ignores `size` and `output_format`: it always returns PNG
-// and picks dimensions from the prompt.
-const codex_caps: Capabilities = .{ .edit = true, .mask = true, .native_transparent = true, .sizes = .prompt, .output_format = false, .quality = true, .max_images = 16 };
+// The Codex backend picks the model and quality itself (Images 2.6 as of
+// 2026-11) and ignores `model`, `quality`, `size` and `output_format`: it
+// always returns PNG and takes dimensions from the prompt.
+const codex_caps: Capabilities = .{ .edit = true, .mask = true, .native_transparent = true, .sizes = .prompt, .output_format = false, .quality = false, .max_images = 16 };
 
 // Module-level so the slices outlive builtins().
 const openai_models = [_]Model{
@@ -102,8 +103,7 @@ const gemini_models = [_]Model{
 };
 
 const codex_models = [_]Model{
-    .{ .name = "gpt-image-2.5-flare", .caps = codex_caps },
-    .{ .name = "gpt-image-2.5-sunburst", .caps = codex_caps },
+    .{ .name = "auto", .caps = codex_caps },
 };
 
 fn builtins(arena: Allocator, env: *const Environ.Map) Allocator.Error![]Provider {
@@ -137,7 +137,7 @@ fn builtins(arena: Allocator, env: *const Environ.Map) Allocator.Error![]Provide
         .base_url = "https://chatgpt.com/backend-api/codex",
         .auth = .codex_login,
         .edit_format = .json,
-        .default_model = "gpt-image-2.5-flare",
+        .default_model = "auto",
         .default_caps = codex_caps,
         .models = &codex_models,
     };
@@ -619,7 +619,7 @@ test "selection order" {
     try t.env.put("IMGEN_PROVIDER", "codex");
     s = try select(testing.io, a, reg, &t.env, null, null, &failed);
     try testing.expectEqualStrings("codex", s.provider.name);
-    try testing.expectEqualStrings("gpt-image-2.5-flare", s.model);
+    try testing.expectEqualStrings("auto", s.model);
 
     // provider/model in a flag; model names may contain '/'
     s = try select(testing.io, a, reg, &t.env, null, "relay/org/model", &failed);
@@ -627,9 +627,9 @@ test "selection order" {
     try testing.expectEqualStrings("org/model", s.model);
 
     // bare model with the env provider
-    s = try select(testing.io, a, reg, &t.env, null, "gpt-image-2.5-sunburst", &failed);
+    s = try select(testing.io, a, reg, &t.env, null, "auto", &failed);
     try testing.expectEqualStrings("codex", s.provider.name);
-    try testing.expectEqualStrings("gpt-image-2.5-sunburst", s.model);
+    try testing.expectEqualStrings("auto", s.model);
 
     try testing.expectError(error.Conflict, select(testing.io, a, reg, &t.env, "openai", "relay/flux-dev", &failed));
     try testing.expectError(error.UnknownProvider, select(testing.io, a, reg, &t.env, "nope", null, &failed));

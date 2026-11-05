@@ -54,14 +54,14 @@ rex session inspect agents >/dev/null 2>&1 || rex new agents -c "$PWD" --window 
 B=$(rex window new -s agents <任务名> -c "$PWD" --focus=false --json -- <agent 命令> | jq -r '.block_ids[0]')
 ```
 
-- 状态：`rex block call -s agents -b "$B" program_status | jq -r '.records[0].state'`，值为 `working`、`idle`、`done`、`blocked`。Claude Code 和 Codex 会上报；Pi 不上报，记录为空。
+- 状态：`rex block call -s agents -b "$B" program_status | jq -r '.records[0].state'`，值为 `working`、`idle`、`done`、`blocked`、`error`。Claude Code 和 Codex 会上报；Pi 不上报，记录为空。
 - 派活：先等到 `idle`（Pi 读屏看到底部出现模型名那行），否则输入会丢。记下 `T=$(date +%Y-%m-%dT%H:%M:%S)`，然后：
   ```sh
   rex send -s agents -b "$B" '<任务>'; sleep 1; rex send-key -s agents -b "$B" enter
   ```
 - 等结果：用 run_in_background 挂起下面的循环，退出后读屏。只认晚于 T 的状态，防止上一轮的 `idle` 让它立刻返回：
   ```sh
-  until rex block call -s agents -b "$B" program_status | jq -e --arg t "$T" '.records[0] | select(.state=="done" or .state=="idle" or .state=="blocked") | select(.updated_at > $t)' >/dev/null; do sleep 15; done
+  until rex block call -s agents -b "$B" program_status | jq -e --arg t "$T" '.records[0] | select(.state=="done" or .state=="idle" or .state=="blocked" or .state=="error") | select(.updated_at > $t)' >/dev/null; do sleep 15; done
   ```
   Pi 改看屏幕：忙的时候输入框上方有 `Working...`，消失即完成：
   ```sh
@@ -105,6 +105,7 @@ herdr agent start <任务名> --kind claude|codex|pi --pane <pane> -- <agent 参
 
 - 启动后先读屏。遇到弹窗（信任目录、更新提示、登录）时截下内容告诉用户，别自己选。需要登录时停下，交给用户。
 - `blocked` 表示 Agent 卡在审批或提问上：读屏后告诉用户，别替用户回答。
+- `error` 多半是额度用完或登录失效：读屏确认原因，告诉用户，换别的 Agent 或模型前先问用户。
 - 等待超时不代表任务没送达，先读屏，再决定要不要重发。
 - 返工在原来的 tab 里接着发，新任务开新 tab。
 - 只关自己开的 tab；`agents` 空间里用户开的东西不动。

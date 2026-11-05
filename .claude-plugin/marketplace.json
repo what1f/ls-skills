@@ -7,7 +7,7 @@
     {
       "name": "agent-dispatch",
       "description": "启动并调度其他编码 Agent（Claude Code、Codex、Pi）干活：在 rex、herdr 里交互式开会话派任务、等结果、追问，没有这些工具时用非交互模式。",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "source": "./",
       "strict": false,
       "skills": [

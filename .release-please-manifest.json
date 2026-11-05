@@ -1,5 +1,5 @@
 {
   "skills/agent-dispatch": "0.1.1",
   "skills/imgen": "0.1.0",
-  "tools/imgen": "0.1.0"
+  "tools/imgen": "0.2.0"
 }

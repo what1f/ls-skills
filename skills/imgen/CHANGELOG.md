@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/what1f/ls-skills/compare/imgen-skill-v0.1.0...imgen-skill-v0.2.0) (2026-11-05)
+
+
+### Features
+
+* **imgen:** turn sprite sheets into GIFs with animate and sheet ([#12](https://github.com/what1f/ls-skills/issues/12)) ([e362bd4](https://github.com/what1f/ls-skills/commit/e362bd44390969a4befa4d09345abf4842f78a61))
+
 ## 0.1.0 (2026-11-04)
 
 ### Features

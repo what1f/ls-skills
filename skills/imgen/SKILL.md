@@ -2,7 +2,7 @@
 name: imgen
 description: 用 imgen CLI 生成和编辑位图：照片、插画、海报、产品图、UI mockup、logo、icon、sprite、贴纸、纹理，透明背景素材，GIF 动图（先生成 sprite sheet 再在本地拼成 GIF），抠图（去绿幕、去纯色背景），缩小图片。支持 OpenAI gpt-image、Gemini（Nano Banana）和 Codex 登录。当用户说「生成图片」「画一张」「出图」「做个图标」「改图」「P 图」「换背景」「抠图」「透明背景」「动图」「GIF」「sprite sheet」「帧动画」「generate an image」「make a picture」「edit this photo」「remove background」时使用。要的是 SVG、HTML/CSS 或延续项目里现有的矢量图标时不用。
 metadata:
-  version: "0.1.0" # x-release-please-version
+  version: "0.2.0" # x-release-please-version
   requires: "imgen>=0.2.0"
 ---
 

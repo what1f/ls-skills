@@ -2,7 +2,7 @@
 name: agent-dispatch
 description: 启动并调度其他编码 Agent（Claude Code、Codex、Pi）干活：在 rex、herdr 里交互式开会话派任务、等结果、追问，没有这些工具时用非交互模式。用户说「交给 Codex」「让 Claude Code 做」「开个 pi」「派个 Agent」「多开几个 Agent 并行」「用 rex/herdr 起一个 agent」「找 gpt/opus 帮忙看看」时使用。
 metadata:
-  version: "0.1.0" # x-release-please-version
+  version: "0.1.1" # x-release-please-version
 ---
 
 # agent-dispatch
